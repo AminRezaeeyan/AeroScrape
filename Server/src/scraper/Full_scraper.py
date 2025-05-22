@@ -5,7 +5,6 @@ import re
 from urllib.parse import urljoin
 import uuid
 
-# Base URL of the website
 base_url = "https://fids.airport.ir/"
 
 # List of airports with their corresponding URLs from the select options
@@ -46,12 +45,11 @@ airports = [
     {"name": "فرودگاه زابل", "url": "/1501/اطلاعات-پرواز-فرودگاه-زابل"}
 ]
 
-# Headers to mimic a browser request
+
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 }
 
-# Function to scrape departure table for a given airport
 def scrape_departure_table(airport_name, airport_url):
     full_url = urljoin(base_url, airport_url)
     try:
@@ -94,7 +92,6 @@ def scrape_departure_table(airport_name, airport_url):
         print(f"Error fetching data for {airport_name}: {e}")
         return []
 
-# Main function to scrape all airports and save to CSV
 def main():
     all_data = []
     for airport in airports:
@@ -102,10 +99,8 @@ def main():
         airport_data = scrape_departure_table(airport['name'], airport['url'])
         all_data.extend(airport_data)
     
-    # Convert to DataFrame
     if all_data:
         df = pd.DataFrame(all_data)
-        # Save to CSV with UTF-8 encoding to support Persian characters
         df.to_csv('C:/Users/ASUS/Desktop/AUT/4th_Term/DB/Data/raw/flight_data.csv', index=False, encoding='utf-8-sig')
         print("Data saved to flight_departures.csv")
     else:
