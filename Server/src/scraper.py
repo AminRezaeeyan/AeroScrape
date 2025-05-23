@@ -104,19 +104,28 @@ def scrape_airport_data(airport_name, airport_url):
         print(f"Error fetching data for {airport_name}: {e}")
         return []
 
-def main():
+def get_all_flights_data() -> pd.DataFrame:
+    """
+    Scrapes flight data from all Iranian airports and returns it as a pandas DataFrame.
+    
+    Returns:
+        pd.DataFrame: A DataFrame containing all flight information with columns:
+            - Scheduled Time
+            - Airline
+            - Flight Number
+            - Destination
+            - Status
+            - Counter
+            - Actual Time
+            - Register
+            - Aircraft
+            - Airport
+            - Flight Type
+    """
     all_data = []
     for airport in airports:
         print(f"Scraping data for {airport['name']}...")
         airport_data = scrape_airport_data(airport['name'], airport['url'])
         all_data.extend(airport_data)
-
-    if all_data:
-        df = pd.DataFrame(all_data)
-        df.to_csv('flight_data.csv', index=False, encoding='utf-8-sig')
-        print("Data saved to flight_data.csv")
-    else:
-        print("No data was scraped.")
-
-if __name__ == "__main__":
-    main()
+    
+    return pd.DataFrame(all_data)
