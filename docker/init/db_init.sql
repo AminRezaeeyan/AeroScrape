@@ -22,7 +22,7 @@ CREATE TABLE flights (
     scheduled_time TIMESTAMP NOT NULL,
     airline_id INT NOT NULL,
     flight_number VARCHAR(50) NOT NULL,
-    destination VARCHAR(255) NOT NULL,
+    city VARCHAR(255) NOT NULL,
     status_id INT NOT NULL,
     counter VARCHAR(50),
     actual_time TIMESTAMP,
