@@ -1,13 +1,11 @@
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import re
 from urllib.parse import urljoin
-import uuid
 
 base_url = "https://fids.airport.ir/"
 
-# List of airports with their corresponding URLs from the select options
+# List of airports with name and URL
 airports = [
     {"name": "فرودگاه مهرآباد", "url": "/2/اطلاعات-پرواز-فرودگاه-مهرآباد"},
     {"name": "فرودگاه مشهد", "url": "/102/اطلاعات-پرواز-فرودگاه-مشهد"},
@@ -45,66 +43,89 @@ airports = [
     {"name": "فرودگاه زابل", "url": "/1501/اطلاعات-پرواز-فرودگاه-زابل"}
 ]
 
-
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 }
 
-def scrape_departure_table(airport_name, airport_url):
+# Map of table IDs to flight types
+flight_table_ids = {
+    "input": "Domestic Arrival",
+    "output": "Domestic Departure",
+    "internal": "International Arrival",
+    "external": "International Departure"
+}
+
+def scrape_table(soup, table_id, airport_name):
+    table_container = soup.find('div', id=table_id)
+    if not table_container:
+        print(f"No section '{table_id}' for {airport_name}")
+        return []
+
+    table = table_container.find('table')
+    if not table:
+        print(f"No table found in '{table_id}' for {airport_name}")
+        return []
+
+    rows = table.find_all('tr')
+    data = []
+    for row in rows[1:]:  # Skip header
+        cols = row.find_all('td')
+        if len(cols) >= 9:
+            flight_data = {
+                'Scheduled Time': cols[0].text.strip(),
+                'Airline': cols[1].text.strip(),
+                'Flight Number': cols[2].text.strip(),
+                'Destination': cols[3].text.strip(),
+                'Status': cols[4].text.strip(),
+                'Counter': cols[5].text.strip(),
+                'Actual Time': cols[6].text.strip(),
+                'Register': cols[7].text.strip(),
+                'Aircraft': cols[8].text.strip(),
+                'Airport': airport_name,
+                'Flight Type': flight_table_ids.get(table_id, 'Unknown')
+            }
+            data.append(flight_data)
+    return data
+
+def scrape_airport_data(airport_name, airport_url):
     full_url = urljoin(base_url, airport_url)
     try:
         response = requests.get(full_url, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Find the departure table (tab with id="output")
-        departure_table = soup.find('div', id='output')
-        if not departure_table:
-            print(f"No departure table found for {airport_name}")
-            return []
-
-        # Find the table within the departure tab
-        table = departure_table.find('table')
-        if not table:
-            print(f"No table found in departure tab for {airport_name}")
-            return []
-
-        rows = table.find_all('tr')
-        data = []
-        for row in rows[1:]:  # Skip header row
-            cols = row.find_all('td')
-            if len(cols) >= 9:
-                flight_data = {
-                    'زمان برنامه ای': cols[0].text.strip(),
-                    'ایرلاین': cols[1].text.strip(),
-                    'شماره پرواز': cols[2].text.strip(),
-                    'مقصد': cols[3].text.strip(),
-                    'وضعیت': cols[4].text.strip(),
-                    'کانتر': cols[5].text.strip(),
-                    'تاریخ و زمان واقعی': cols[6].text.strip(),
-                    'رجیستر': cols[7].text.strip(),
-                    'هواپیما': cols[8].text.strip(),
-                    'فرودگاه': airport_name
-                }
-                data.append(flight_data)
-        return data
+        all_flights = []
+        for table_id in flight_table_ids.keys():
+            flights = scrape_table(soup, table_id, airport_name)
+            all_flights.extend(flights)
+        
+        return all_flights
     except requests.RequestException as e:
         print(f"Error fetching data for {airport_name}: {e}")
         return []
 
-def main():
+def get_all_flights_data() -> pd.DataFrame:
+    """
+    Scrapes flight data from all Iranian airports and returns it as a pandas DataFrame.
+    
+    Returns:
+        pd.DataFrame: A DataFrame containing all flight information with columns:
+            - Scheduled Time
+            - Airline
+            - Flight Number
+            - Destination
+            - Status
+            - Counter
+            - Actual Time
+            - Register
+            - Aircraft
+            - Airport
+            - Flight Type
+    """
     all_data = []
     for airport in airports:
         print(f"Scraping data for {airport['name']}...")
-        airport_data = scrape_departure_table(airport['name'], airport['url'])
+        airport_data = scrape_airport_data(airport['name'], airport['url'])
         all_data.extend(airport_data)
     
-    if all_data:
-        df = pd.DataFrame(all_data)
-        df.to_csv('C:/Users/ASUS/Desktop/AUT/4th_Term/DB/Data/raw/flight_data.csv', index=False, encoding='utf-8-sig')
-        print("Data saved to flight_departures.csv")
-    else:
-        print("No data was scraped.")
-
-if __name__ == "__main__":
-    main()
+    return pd.DataFrame(all_data)

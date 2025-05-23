@@ -1,0 +1,4 @@
+# Scraping Dependencies
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+pandas>=2.1.0
