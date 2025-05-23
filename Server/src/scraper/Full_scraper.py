@@ -1,9 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import re
 from urllib.parse import urljoin
-import uuid
 
 base_url = "https://fids.airport.ir/"
 
@@ -101,7 +99,7 @@ def main():
     
     if all_data:
         df = pd.DataFrame(all_data)
-        df.to_csv('C:/Users/ASUS/Desktop/AUT/4th_Term/DB/Data/raw/flight_data.csv', index=False, encoding='utf-8-sig')
+        df.to_csv('flight_data.csv', index=False, encoding='utf-8-sig')
         print("Data saved to flight_departures.csv")
     else:
         print("No data was scraped.")
