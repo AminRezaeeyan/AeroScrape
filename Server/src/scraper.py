@@ -47,12 +47,10 @@ headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 }
 
-# Map of table IDs to flight types
+# Map of table IDs to flight types(international or domestic)
 flight_table_ids = {
-    "input": "Domestic Arrival",
-    "output": "Domestic Departure",
-    "internal": "International Arrival",
-    "external": "International Departure"
+    "output": False,       # Domestic Departure
+    "external": True       # International Departure
 }
 
 def scrape_table(soup, table_id, airport_name):
@@ -72,20 +70,21 @@ def scrape_table(soup, table_id, airport_name):
         cols = row.find_all('td')
         if len(cols) >= 9:
             flight_data = {
-                'Scheduled Time': cols[0].text.strip(),
-                'Airline': cols[1].text.strip(),
-                'Flight Number': cols[2].text.strip(),
-                'Destination': cols[3].text.strip(),
-                'Status': cols[4].text.strip(),
-                'Counter': cols[5].text.strip(),
-                'Actual Time': cols[6].text.strip(),
-                'Register': cols[7].text.strip(),
-                'Aircraft': cols[8].text.strip(),
-                'Airport': airport_name,
-                'Flight Type': flight_table_ids.get(table_id, 'Unknown')
+                'scheduled_time': cols[0].text.strip(),
+                'airline': cols[1].text.strip(),
+                'flight_number': cols[2].text.strip(),
+                'destination': cols[3].text.strip(),
+                'status': cols[4].text.strip(),
+                'counter': cols[5].text.strip(),
+                'actual_time': cols[6].text.strip(),
+                'register': cols[7].text.strip(),
+                'aircraft': cols[8].text.strip(),
+                'airport': airport_name,
+                'is_international': flight_table_ids[table_id]
             }
             data.append(flight_data)
     return data
+
 
 def scrape_airport_data(airport_name, airport_url):
     full_url = urljoin(base_url, airport_url)
