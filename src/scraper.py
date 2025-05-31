@@ -63,13 +63,14 @@ def get_all_flights_data() -> pd.DataFrame:
     df = pd.DataFrame(all_data)
 
     if not df.empty:
-        df["destination"] = df.apply(
-            lambda row: row["destination_or_origin"] if "departure" in row["flight_type"].lower() else None,
-            axis=1,
+        # Split destination_or_origin into destination and origin based on flight_type
+        df['destination'] = df.apply(
+            lambda row: row['destination_or_origin'] if 'departure' in row['flight_type'].lower() else None,
+            axis=1
         )
-        df["origin"] = df.apply(
-            lambda row: row["destination_or_origin"] if "arrival" in row["flight_type"].lower() else None,
-            axis=1,
+        df['origin'] = df.apply(
+            lambda row: row['destination_or_origin'] if 'arrival' in row['flight_type'].lower() else None,
+            axis=1
         )
 
-    return df.drop(columns=["destination_or_origin"])
+    return df
