@@ -1,0 +1,4 @@
+2025-06-03 13:59:05,228 - INFO - main - main - No --date provided. Using current date as base date: 2025-06-03
+2025-06-03 13:59:05,229 - INFO - main - main - Starting flight data scraping...
+2025-06-03 13:59:27,327 - INFO - main - main - Successfully scraped 1464 flights.
+2025-06-03 13:59:36,509 - INFO - main - main - Successfully inserted/updated 1464 flights from scraping into the database.
