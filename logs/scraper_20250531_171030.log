@@ -1,3 +1,0 @@
-2025-05-31 17:10:30,576 - INFO - Starting flight data scraping...
-2025-05-31 17:10:47,573 - INFO - Successfully scraped 1391 flights
-2025-05-31 17:11:05,397 - INFO - Successfully inserted/updated 1391 flights in the database

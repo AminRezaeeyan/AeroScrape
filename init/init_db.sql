@@ -23,6 +23,7 @@ CREATE TABLE arrivals (
     register VARCHAR(100),
     aircraft VARCHAR(100),
     airport_id INT NOT NULL,
+    is_international BOOLEAN NOT NULL,
     
     FOREIGN KEY (airport_id) REFERENCES airports(id),
     CONSTRAINT unique_arrival UNIQUE (flight_number, scheduled_time, airport_id)
@@ -44,6 +45,7 @@ CREATE TABLE departures (
     register VARCHAR(100),
     aircraft VARCHAR(100),
     airport_id INT NOT NULL,
+    is_international BOOLEAN NOT NULL,
     
     FOREIGN KEY (airport_id) REFERENCES airports(id),
     CONSTRAINT unique_departure UNIQUE (flight_number, scheduled_time, airport_id)
