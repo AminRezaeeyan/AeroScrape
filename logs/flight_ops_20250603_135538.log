@@ -1,0 +1,3 @@
+2025-06-03 13:55:38,382 - INFO - main - main - Using base date: 2025-06-02
+2025-06-03 13:55:38,382 - INFO - main - main - Attempting to import flights from CSV: ./02.csv
+2025-06-03 13:55:42,588 - INFO - main - main - Successfully inserted/updated 642 flights from CSV file: ./02.csv

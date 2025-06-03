@@ -1,0 +1,7 @@
+2025-06-03 13:55:54,675 - INFO - main - main - Starting flight data scraping...
+2025-06-03 13:55:54,675 - ERROR - main - main - An unexpected error occurred in main execution: get_all_flights_data() got an unexpected keyword argument 'base_date_str'
+Traceback (most recent call last):
+  File "/home/amin/CE/AeroScrape/src/main.py", line 70, in main
+    df = get_all_flights_data(base_date_str=args.date if base_date else None) # Adjust if scraper takes base_date differently
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: get_all_flights_data() got an unexpected keyword argument 'base_date_str'
