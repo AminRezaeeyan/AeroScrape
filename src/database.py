@@ -1,13 +1,13 @@
 import psycopg2
 from psycopg2.extras import DictCursor
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Any, Tuple # Added Tuple
+from typing import List, Dict, Optional, Any, Tuple
 import pandas as pd
-from config import Config # Assuming you have a config.py file
+from config import Config
 import logging
 import jdatetime
 import csv
-import re # Import the regular expression module
+import re
 
 # Define PERSIAN_WEEKDAYS at the module level
 PERSIAN_WEEKDAYS = ['شنبه', 'یکشنبه', 'دو شنبه', 'سه شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه']
@@ -58,7 +58,6 @@ class Database:
             persian_date_str = persian_date_match.group(1)
             time_str_for_full_date = time_match_general.group(1) if time_match_general else None
             
-            # Avoid using time if it's part of the date string itself (e.g. if date regex was too greedy, though unlikely here)
             if time_str_for_full_date and time_str_for_full_date in persian_date_str:
                  time_str_for_full_date = None
 
@@ -195,10 +194,7 @@ class Database:
                         scheduled_time_str = str(row.get('scheduled_time')).strip() if pd.notna(row.get('scheduled_time')) and str(row.get('scheduled_time')).strip() else None
                         actual_time_str = str(row.get('actual_time')).strip() if pd.notna(row.get('actual_time')) and str(row.get('actual_time')).strip() else None
 
-                        # Parse scheduled_time
                         scheduled_time, _ = self._parse_time_with_weekday(scheduled_time_str, base_date) if scheduled_time_str else (None, None)
-                        
-                        # Parse actual_time and get how its date was determined
                         actual_time, actual_time_date_source = self._parse_time_with_weekday(actual_time_str, base_date) if actual_time_str else (None, None)
                         
                         # --- Heuristic for actual_time adjustment if its date was from base_date fallback ---
@@ -318,11 +314,8 @@ class Database:
                     
                     return time_str 
 
-                # Only apply prepending logic to scheduled_time
                 if 'scheduled_time' in df.columns:
                     df['scheduled_time'] = df['scheduled_time'].apply(_prepend_base_weekday_if_needed)
-                # Do NOT apply _prepend_base_weekday_if_needed to 'actual_time' here.
-                # Let the main parser and heuristic in insert_flights_from_dataframe handle actual_time.
             
             expected_cols = ['airport', 'scheduled_time', 'actual_time', 'flight_type', 'airline', 
                              'flight_number', 'destination_or_origin', 'status', 'counter', 'register', 'aircraft']
