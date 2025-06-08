@@ -1,0 +1,15 @@
+artifact_uri: file:///home/mahan/Projects/Flight_dalay/mlruns/211177587737198377/d1aecffb782541cb87b3694298773b54/artifacts
+end_time: 1749229647482
+entry_point_name: ''
+experiment_id: '211177587737198377'
+lifecycle_stage: active
+run_id: d1aecffb782541cb87b3694298773b54
+run_name: powerful-yak-979
+run_uuid: d1aecffb782541cb87b3694298773b54
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1749229645350
+status: 4
+tags: []
+user_id: mahan

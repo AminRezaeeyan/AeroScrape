@@ -1,0 +1,15 @@
+artifact_uri: file:///home/mahan/Projects/Flight_dalay/mlruns/211177587737198377/3c3681dc534f4e128874458610f6ea1b/artifacts
+end_time: 1749371993724
+entry_point_name: ''
+experiment_id: '211177587737198377'
+lifecycle_stage: active
+run_id: 3c3681dc534f4e128874458610f6ea1b
+run_name: regression_training
+run_uuid: 3c3681dc534f4e128874458610f6ea1b
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1749371983342
+status: 3
+tags: []
+user_id: mahan

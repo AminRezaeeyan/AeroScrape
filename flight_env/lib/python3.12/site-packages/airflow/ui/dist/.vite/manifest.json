@@ -1,0 +1,20 @@
+{
+  "index.html": {
+    "file": "assets/index-CJkseLuS.js",
+    "name": "index",
+    "src": "index.html",
+    "isEntry": true,
+    "dynamicImports": [
+      "src/pages/Dag/Overview/FailedLogs.tsx"
+    ]
+  },
+  "src/pages/Dag/Overview/FailedLogs.tsx": {
+    "file": "assets/FailedLogs-Cp38rzag.js",
+    "name": "FailedLogs",
+    "src": "src/pages/Dag/Overview/FailedLogs.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html"
+    ]
+  }
+}

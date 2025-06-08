@@ -1,0 +1,14 @@
+aliases: []
+creation_timestamp: 1749370463342
+current_stage: None
+description: null
+last_updated_timestamp: 1749370463342
+name: flight-delay-classifier
+run_id: 255b1f81d64b4f64807ea6d308b49159
+run_link: null
+source: file:///home/mahan/Projects/Flight_dalay/mlflow_data/120813722374989373/255b1f81d64b4f64807ea6d308b49159/artifacts/logistic-classifier
+status: READY
+status_message: null
+storage_location: file:///home/mahan/Projects/Flight_dalay/mlflow_data/120813722374989373/255b1f81d64b4f64807ea6d308b49159/artifacts/logistic-classifier
+user_id: null
+version: 1

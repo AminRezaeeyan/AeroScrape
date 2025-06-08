@@ -1,0 +1,2 @@
+model_name: flight-delay-regressor
+model_version: '2'

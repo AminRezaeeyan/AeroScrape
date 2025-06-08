@@ -1,0 +1,15 @@
+artifact_uri: file:///home/mahan/Projects/Flight_dalay/mlflow_data/120813722374989373/255b1f81d64b4f64807ea6d308b49159/artifacts
+end_time: 1749370463345
+entry_point_name: ''
+experiment_id: '120813722374989373'
+lifecycle_stage: active
+run_id: 255b1f81d64b4f64807ea6d308b49159
+run_name: classification_training
+run_uuid: 255b1f81d64b4f64807ea6d308b49159
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1749370459060
+status: 3
+tags: []
+user_id: mahan

@@ -1,0 +1,14 @@
+aliases: []
+creation_timestamp: 1749230201966
+current_stage: Staging
+description: null
+last_updated_timestamp: 1749277457048
+name: flight-delay-regressor
+run_id: d33b950eef4a4baab235c24a69fa846d
+run_link: null
+source: file:///home/mahan/Projects/Flight_dalay/mlruns/211177587737198377/d33b950eef4a4baab235c24a69fa846d/artifacts/lgbm-regressor
+status: READY
+status_message: null
+storage_location: file:///home/mahan/Projects/Flight_dalay/mlruns/211177587737198377/d33b950eef4a4baab235c24a69fa846d/artifacts/lgbm-regressor
+user_id: null
+version: 1
