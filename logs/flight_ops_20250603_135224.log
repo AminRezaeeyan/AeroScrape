@@ -1,0 +1,33 @@
+2025-06-03 13:52:24,882 - INFO - main - main - Using base date: 2025-06-02
+2025-06-03 13:52:24,882 - INFO - main - main - Attempting to import flights from CSV: ./02.csv
+2025-06-03 13:52:28,561 - ERROR - database - insert_flights_from_dataframe - Database error inserting flight IRM4562: null value in column "status" of relation "departures" violates not-null constraint
+DETAIL:  Failing row contains (17653, 2025-06-03 05:15:00, ماهان, IRM4562, اهواز, null, 3-4, null, null, BAE146, 9, f).
+. SQL was: 
+                                INSERT INTO departures (
+                                    scheduled_time, airline, flight_number, destination,
+                                    status, counter, actual_time, register,
+                                    aircraft, airport_id, is_international
+                                ) VALUES ('2025-06-03T05:15:00'::timestamp, 'ماهان', 'IRM4562', 'اهواز', NULL, '3-4', NULL, NULL, 'BAE146', 9, false)
+                                ON CONFLICT (flight_number, scheduled_time, airport_id)
+                                DO UPDATE SET
+                                    status = EXCLUDED.status,
+                                    counter = EXCLUDED.counter,
+                                    actual_time = EXCLUDED.actual_time,
+                                    register = EXCLUDED.register,
+                                    aircraft = EXCLUDED.aircraft,
+                                    is_international = EXCLUDED.is_international,
+                                    destination = EXCLUDED.destination,
+                                    airline = EXCLUDED.airline
+                            
+2025-06-03 13:52:28,561 - ERROR - database - insert_flights_from_csv - Error importing CSV file './02.csv': null value in column "status" of relation "departures" violates not-null constraint
+DETAIL:  Failing row contains (17653, 2025-06-03 05:15:00, ماهان, IRM4562, اهواز, null, 3-4, null, null, BAE146, 9, f).
+Traceback (most recent call last):
+  File "/home/amin/CE/AeroScrape/src/database.py", line 392, in insert_flights_from_csv
+    return self.insert_flights_from_dataframe(df, base_date)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/amin/CE/AeroScrape/src/database.py", line 297, in insert_flights_from_dataframe
+    cur.execute("""
+psycopg2.errors.NotNullViolation: null value in column "status" of relation "departures" violates not-null constraint
+DETAIL:  Failing row contains (17653, 2025-06-03 05:15:00, ماهان, IRM4562, اهواز, null, 3-4, null, null, BAE146, 9, f).
+
+2025-06-03 13:52:28,562 - INFO - main - main - Successfully inserted/updated 0 flights from CSV file: ./02.csv
