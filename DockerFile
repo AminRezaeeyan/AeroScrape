@@ -1,0 +1,46 @@
+# 1. Choose a base image with Python installed
+# Using an official Python image is a good start. Specify a version for reproducibility.
+# Consider slim versions for smaller image sizes.
+FROM python:3.11-slim
+
+# 2. Set environment variables (optional but good practice)
+ENV PYTHONUNBUFFERED=1 \
+    # For Airflow, if this image were to be a worker or run Airflow components:
+    # AIRFLOW_HOME="/opt/airflow" \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=off
+
+# 3. Set the working directory inside the container
+WORKDIR /app
+
+# 4. Copy the requirements file into the image
+COPY requirements.txt .
+
+# 5. Install Python dependencies
+# Using --no-cache-dir can make the image smaller
+# Optionally, create a virtual environment inside Docker, though often direct install is fine for single-purpose images.
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 6. Copy your project's scripts and configuration
+# Only copy what's needed for the tasks to run.
+COPY ./scripts /app/scripts
+COPY ./config /app/config
+# If your pipeline_tasks.py needs other root-level files, copy them too.
+
+# 7. Create directories that might be used for mounting volumes (data, models, logs)
+# These are often managed by Airflow through volume mounts or remote storage,
+# but creating them ensures they exist if the image is run standalone with local mounts.
+RUN mkdir -p /app/data /app/models /app/logs
+
+# 8. Set permissions if necessary (e.g., if running as a non-root user)
+# RUN chown -R youruser:yourgroup /app
+# (For simplicity, often run as root in Docker unless specific security needs arise)
+
+# 9. Define what command to run when the container starts (optional for Airflow DockerOperator)
+# For Airflow DockerOperator, the command is usually specified in the DAG task.
+# If you wanted this image to be executable directly for a specific script, you might add:
+# ENTRYPOINT ["python", "scripts/pipeline_tasks.py"]
+# CMD ["--help"] # Default arguments to the entrypoint
+
+# Expose ports if your application is a service (not typically needed for batch ML tasks)
+# EXPOSE 8000
