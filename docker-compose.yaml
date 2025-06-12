@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:13
+    container_name: flight_db
+    environment:
+      - POSTGRES_USER=flight-database-user
+      - POSTGRES_PASSWORD=$secret$
+      - POSTGRES_DB=flight-data
+    volumes:
+      - ./init/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - flight_network
+
+  mlflow:
+    image: python:3.12.3-slim-buster
+    container_name: mlflow_server
+    command: >
+      sh -c "pip install mlflow &&
+             mlflow server \\
+                --backend-store-uri postgresql://flight-database-user:$$secret$$@db:5432/flight-data \\
+                --default-artifact-root file:/mlflow_data \\
+                --host 0.0.0.0"
+    volumes:
+      - ./mlflow_data:/mlflow_data
+    ports:
+      - "5000:5000"
+    depends_on:
+      - db
+    networks:
+      - flight_network
+
+  api:
+    build: .
+    container_name: flight_api
+    command: uvicorn serve:app --host 0.0.0.0 --port 8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mlflow
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    networks:
+      - flight_network
+
+  scraper:
+    build: .
+    container_name: flight_scraper
+    command: python src/main.py
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+    environment:
+      - DB_HOST=db
+    networks:
+      - flight_network
+
+volumes:
+  postgres_data:
+
+networks:
+  flight_network:
+    driver: bridge
