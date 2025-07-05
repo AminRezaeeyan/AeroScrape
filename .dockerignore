@@ -1,0 +1,31 @@
+# Git specific files
+.git
+.gitignore
+
+# Environment variable files (containing secrets)
+.env
+template.env
+
+# Python specific generated files/directories
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+venv/
+flight_env/
+
+# Application specific generated data/logs
+logs/        # Logs are mounted as a volume, not part of the image
+mlruns/      # MLflow tracking data is mounted as a volume, not part of the image
+models/      # Models are mounted as a volume for persistence, not part of the image
+
+# IDE and Editor specific files
+.vscode/
+.DS_Store
+*.swp
+*.bak
+*.tmp
+
+# Docker specific files (ignore itself)
+Dockerfile
+docker-compose.yaml
