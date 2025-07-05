@@ -1,0 +1,22 @@
+artifact_path: /home/amin/CE/AeroScrape-new/mlruns/1/models/m-8ff3b4ffd91e413c8734c7a6d0044607/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.3
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.6.1
+mlflow_version: 3.1.1
+model_id: m-8ff3b4ffd91e413c8734c7a6d0044607
+model_size_bytes: 1914
+model_uuid: m-8ff3b4ffd91e413c8734c7a6d0044607
+prompts: null
+run_id: 1bc5bb51281440a7a79cb544b0935a6f
+utc_time_created: '2025-07-05 13:38:08.664405'

@@ -1,6 +1,0 @@
-artifact_location: file:///home/mahan/Projects/Flight_dalay/mlflow_data/120813722374989373
-creation_time: 1749230778599
-experiment_id: '120813722374989373'
-last_update_time: 1749230778599
-lifecycle_stage: active
-name: flight_delay_prediction

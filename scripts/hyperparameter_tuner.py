@@ -4,11 +4,11 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import mean_absolute_error, f1_score
 import logging
 import json
+import os
 
 logger = logging.getLogger(__name__)
 
 def tune_regression_hyperparameters(X_train, y_train, X_val, y_val, n_trials):
-    """Uses Optuna to find the best hyperparameters for the LGBM Regressor."""
     def objective(trial):
         params = {
             "objective": "regression_l1",
@@ -28,13 +28,12 @@ def tune_regression_hyperparameters(X_train, y_train, X_val, y_val, n_trials):
         return mae
 
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=n_trials, timeout=600) # 10-minute timeout
+    study.optimize(objective, n_trials=n_trials, timeout=600)
     logger.info(f"Regression tuning complete. Best MAE: {study.best_value}")
     logger.info(f"Best params: {study.best_params}")
     return study.best_params
 
 def tune_classification_hyperparameters(X_train, y_train, X_val, y_val, n_trials):
-    """Uses Optuna to find the best hyperparameters for Logistic Regression."""
     def objective(trial):
         params = {
             "solver": "liblinear",
@@ -44,7 +43,7 @@ def tune_classification_hyperparameters(X_train, y_train, X_val, y_val, n_trials
         model = LogisticRegression(**params, max_iter=200)
         model.fit(X_train, y_train)
         preds = model.predict(X_val)
-        # Using F1-score as it's good for potentially imbalanced classes
+
         f1 = f1_score(y_val, preds, zero_division=0)
         return f1
 
@@ -55,8 +54,8 @@ def tune_classification_hyperparameters(X_train, y_train, X_val, y_val, n_trials
     return study.best_params
 
 def save_best_params(params, path):
-    """Saves the best parameters dictionary to a JSON file."""
     try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
             json.dump(params, f, indent=4)
         logger.info(f"Best parameters saved to {path}")
