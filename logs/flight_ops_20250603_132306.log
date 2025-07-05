@@ -1,4 +1,0 @@
-2025-06-03 13:23:06,231 - INFO - main - main - Using base date: 2025-05-22
-2025-06-03 13:23:06,231 - INFO - main - main - Attempting to import flights from CSV: ./a22.csv
-2025-06-03 13:23:17,717 - ERROR - database - insert_flights_from_dataframe - Skipping flight due to missing key components: flight_number='None', airport_id='11' for row: {'scheduled_time': 'پنجشنبه 05:30', 'airline': 'یزد ایر', 'flight_number': '', 'destination_or_origin': 'تهران', 'status': '', 'counter': '2-3', 'actual_time': None, 'register': '', 'aircraft': '146-100', 'airport': 'فرودگاه يزد', 'flight_type': 'Domestic Departure', 'destination': 'تهران', 'origin': ''}. Scheduled time was 'پنجشنبه 05:30' parsed to '2025-05-22 05:30:00'.
-2025-06-03 13:23:18,694 - INFO - main - main - Successfully inserted/updated 1951 flights from CSV file: ./a22.csv

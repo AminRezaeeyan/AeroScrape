@@ -1,3 +1,0 @@
-2025-06-03 13:40:12,649 - INFO - main - main - Attempting to export database content to CSV: ./test.csv
-2025-06-03 13:40:12,762 - INFO - database - export_csv - Successfully exported 7078 flight records to ./test.csv
-2025-06-03 13:40:12,765 - INFO - main - main - Database content successfully exported to ./test.csv

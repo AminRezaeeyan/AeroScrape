@@ -1,4 +1,0 @@
-2025-06-03 14:01:04,612 - INFO - main - main - No --date provided. Using current date as base date: 2025-06-03
-2025-06-03 14:01:04,612 - INFO - main - main - Attempting to export database content to CSV: ./all-data.csv
-2025-06-03 14:01:04,761 - INFO - database - export_csv - Successfully exported 9721 flight records to ./all-data.csv
-2025-06-03 14:01:04,764 - INFO - main - main - Database content successfully exported to ./all-data.csv

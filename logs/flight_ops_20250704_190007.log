@@ -1,0 +1,5 @@
+2025-07-04 19:00:07,847 - INFO - cli - run_data_operations - Application configuration successfully accessed.
+2025-07-04 19:00:07,859 - INFO - cli - run_data_operations - No --date provided. Using current date as base date: 2025-07-04
+2025-07-04 19:00:07,860 - INFO - cli - run_data_operations - Attempting to export database content to CSV: data/raw/raw_data.csv
+2025-07-04 19:00:08,238 - INFO - database - export_csv - Successfully exported 15732 flight records to data/raw/raw_data.csv
+2025-07-04 19:00:08,246 - INFO - cli - run_data_operations - Database content successfully exported to data/raw/raw_data.csv

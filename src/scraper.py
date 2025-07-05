@@ -2,13 +2,12 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from urllib.parse import urljoin
-from config import Config
-
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-}
+from utils.config import get_app_config
 
 def scrape_table(soup, table_id, airport_name):
+    app_config = get_app_config()
+    flight_table_ids = app_config['scraper']['flight_table_ids']
+
     table_container = soup.find('div', id=table_id)
     if not table_container:
         return []
@@ -19,7 +18,7 @@ def scrape_table(soup, table_id, airport_name):
 
     rows = table.find_all('tr')
     data = []
-    for row in rows[1:]:  # Skip header
+    for row in rows[1:]:
         cols = row.find_all('td')
         if len(cols) >= 9:
             flight_data = {
@@ -33,19 +32,25 @@ def scrape_table(soup, table_id, airport_name):
                 'register': cols[7].text.strip(),
                 'aircraft': cols[8].text.strip(),
                 'airport': airport_name,
-                'flight_type': Config.FLIGHT_TABLE_IDS.get(table_id, 'Unknown')
+                'flight_type': flight_table_ids.get(table_id, 'Unknown')
             }
             data.append(flight_data)
     return data
 
 def scrape_airport_data(airport_name, airport_url):
-    full_url = urljoin(Config.BASE_URL, airport_url)
+    app_config = get_app_config()
+    base_url = app_config['scraper']['base_url']
+    user_agent = app_config['scraper']['user_agent']
+
+    headers = {"User-Agent": user_agent}
+
+    full_url = urljoin(base_url, airport_url)
     try:
         response = requests.get(full_url, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         all_flights = []
-        for table_id in Config.FLIGHT_TABLE_IDS:
+        for table_id in app_config['scraper']['flight_table_ids']:
             flights = scrape_table(soup, table_id, airport_name)
             all_flights.extend(flights)
         return all_flights
@@ -54,8 +59,11 @@ def scrape_airport_data(airport_name, airport_url):
         return []
 
 def get_all_flights_data() -> pd.DataFrame:
+    app_config = get_app_config()
+    airports_config = app_config['scraper']['airports']
+
     all_data = []
-    for airport in Config.AIRPORTS:
+    for airport in airports_config:
         print(f"Scraping data for {airport['name']}...")
         airport_data = scrape_airport_data(airport['name'], airport['url'])
         all_data.extend(airport_data)
@@ -63,7 +71,6 @@ def get_all_flights_data() -> pd.DataFrame:
     df = pd.DataFrame(all_data)
 
     if not df.empty:
-        # Split destination_or_origin into destination and origin based on flight_type
         df['destination'] = df.apply(
             lambda row: row['destination_or_origin'] if 'departure' in row['flight_type'].lower() else None,
             axis=1
@@ -74,3 +81,7 @@ def get_all_flights_data() -> pd.DataFrame:
         )
 
     return df
+
+if __name__ == '__main__':
+    df = get_all_flights_data()
+    print(df.head())

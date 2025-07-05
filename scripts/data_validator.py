@@ -5,7 +5,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Define the schema for the raw data
 raw_data_schema = pa.DataFrameSchema({
     "scheduled_time": pa.Column(pa.String, nullable=False),
     "actual_time": pa.Column(pa.String, nullable=True),
@@ -14,17 +13,13 @@ raw_data_schema = pa.DataFrameSchema({
     "destination_or_origin": pa.Column(pa.String, nullable=False),
     "status": pa.Column(pa.String, nullable=False),
     "flight_type": pa.Column(pa.String, pa.Check.isin(['Domestic Departure', 'Domestic Arrival', 'International Arrival', 'International Departure'])),
-}, strict=False) # strict=False means other columns can exist
+}, strict=False)
 
 def validate_raw_data(data_path):
-    """
-    Loads raw data and validates it against the Pandera schema.
-    Returns True if valid, raises SchemaError otherwise.
-    """
     logger.info(f"Validating raw data from {data_path}")
     try:
         df = pd.read_csv(data_path)
-        raw_data_schema.validate(df, lazy=True) # lazy=True collects all errors
+        raw_data_schema.validate(df, lazy=True)
         logger.info("Raw data validation successful.")
         return True
     except FileNotFoundError:

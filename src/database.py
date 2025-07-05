@@ -1,140 +1,105 @@
 import psycopg2
 from psycopg2.extras import DictCursor
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 import pandas as pd
-from config import Config
 import logging
 import jdatetime
-import csv
+from utils.config import get_app_config
+import re
 
-# Define PERSIAN_WEEKDAYS at the module level
+logger = logging.getLogger(__name__)
+
 PERSIAN_WEEKDAYS = ['شنبه', 'یکشنبه', 'دو شنبه', 'سه شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه']
 
 class Database:
     def __init__(self):
-        # Initialize database connection parameters from Config
+        app_config = get_app_config()
+        db_settings = app_config['database']
+
         self.conn_params = {
-            'dbname': Config.DB_NAME,
-            'user': Config.DB_USER,
-            'password': Config.DB_PASSWORD,
-            'host': Config.DB_HOST,
-            'port': Config.DB_PORT
+            'dbname': db_settings["DB_NAME"],
+            'user': db_settings["DB_USER"],
+            'password': db_settings["DB_PASSWORD"],
+            'host': db_settings["DB_HOST"],
+            'port': db_settings["DB_PORT"]
         }
 
     def get_connection(self):
-        # Establish and return a new database connection
         return psycopg2.connect(**self.conn_params)
 
     def test_connection(self) -> bool:
-        """Test the database connection"""
         try:
-            # Try to connect and execute a simple query
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
                     return True
         except Exception as e:
-            logging.error(f"Database connection failed: {str(e)}")
+            logger.error(f"Database connection failed: {str(e)}")
             return False
-
-    def _parse_time_with_weekday(self, time_str_input: str, base_date: Optional[datetime] = None) -> Optional[datetime]:
+        
+    
+    def _parse_time_with_weekday(self, time_str_input: str, base_date: Optional[datetime] = None) -> Tuple[Optional[datetime], Optional[str]]:
         """
         Convert time string with Persian weekday or full Persian date to datetime.
-        Handles:
-        1. Full Persian date and time (e.g., "1403-03-05 23:50").
-        2. Persian weekday and time (e.g., "دو شنبه 23:50"), relative to base_date (+/-2 days).
-        3. Time only (e.g., "23:50"), falls back to _parse_time.
+        Returns (datetime_obj, source_flag) where source_flag indicates how date was determined.
+        source_flag can be: 'full_date_parsed', 'weekday_parsed', 'time_only_fallback', or None.
         """
         if not time_str_input or not isinstance(time_str_input, str):
-            logging.debug(f"_parse_time_with_weekday: Invalid time_str_input: '{time_str_input}'. Must be a non-empty string.")
-            return None
+            logging.debug(f"_parse_time_with_weekday: Invalid time_str_input: '{time_str_input}'.")
+            return None, None
         
-        original_time_str = time_str_input.strip() 
-        parts = original_time_str.split()
-        if not parts:
-            logging.debug(f"_parse_time_with_weekday: Empty time string after splitting: '{original_time_str}'")
-            return None
+        original_time_str = time_str_input.strip()
+        
+        persian_date_match = re.search(r"(\d{4}-\d{1,2}-\d{1,2})", original_time_str)
+        time_match_general = re.search(r"(\d{1,2}:\d{1,2})", original_time_str)
 
-        # --- 1. Check for full Persian date (e.g., "1403-03-05 23:50") ---
-        persian_date_str_component = None
-        time_str_component_for_persian_date = None
-
-        for part_idx, part_content in enumerate(parts):
-            if part_content.count('-') == 2: 
-                try:
-                    year, month, day = map(int, part_content.split('-'))
-                    if 1300 <= year <= 1500: 
-                        jdatetime.date(year, month, day) 
-                        persian_date_str_component = part_content
-                        for next_part_idx in range(part_idx + 1, len(parts)):
-                            if ':' in parts[next_part_idx]:
-                                time_str_component_for_persian_date = parts[next_part_idx]
-                                break
-                        break 
-                except (ValueError, TypeError): 
-                    continue 
-                except Exception: 
-                    continue
-
-        if persian_date_str_component:
-            if not time_str_component_for_persian_date:
-                for part_content in parts:
-                    if ':' in part_content and part_content != persian_date_str_component:
-                        time_str_component_for_persian_date = part_content
-                        break
+        if persian_date_match:
+            persian_date_str = persian_date_match.group(1)
+            time_str_for_full_date = time_match_general.group(1) if time_match_general else None
             
-            if time_str_component_for_persian_date:
+            if time_str_for_full_date and time_str_for_full_date in persian_date_str:
+                 time_str_for_full_date = None
+
+
+            if time_str_for_full_date: # Only proceed if both date and a plausible separate time are found
                 try:
-                    year, month, day = map(int, persian_date_str_component.split('-'))
+                    year, month, day = map(int, persian_date_str.split('-'))
+                    if not (1300 <= year <= 1500): 
+                        raise ValueError("Persian year out of plausible range.")
                     persian_date_obj = jdatetime.date(year, month, day)
                     gregorian_date = persian_date_obj.togregorian()
                     
-                    clean_time_str = time_str_component_for_persian_date.split('/')[0] 
+                    clean_time_str = time_str_for_full_date.split('/')[0] 
                     if clean_time_str.count(':') > 1: 
                         clean_time_str = ':'.join(clean_time_str.split(':')[:2])
                     
                     time_obj = datetime.strptime(clean_time_str, "%H:%M").time()
-                    logging.debug(f"Parsed full Persian date-time: '{original_time_str}' -> {datetime.combine(gregorian_date, time_obj)}")
-                    return datetime.combine(gregorian_date, time_obj)
+                    dt_result = datetime.combine(gregorian_date, time_obj)
+                    logging.debug(f"Parsed as 'full_date_parsed': '{original_time_str}' -> {dt_result}")
+                    return dt_result, 'full_date_parsed'
                 except Exception as e:
-                    logging.error(f"Failed to parse full Persian date-time '{original_time_str}' (date: '{persian_date_str_component}', time: '{time_str_component_for_persian_date}'): {str(e)}")
-                    return None
+                    logging.debug(f"Failed to parse as 'full_date_parsed' (regex) from '{original_time_str}': {str(e)}. Trying other methods.")
             else:
-                logging.warning(f"Found Persian date component '{persian_date_str_component}' in '{original_time_str}' but no associated time component.")
+                logging.debug(f"Found Persian date '{persian_date_str}' but no clear time in '{original_time_str}'. Trying weekday parsing.")
 
-        # --- 2. Check for Persian weekday prefix (e.g., "دو شنبه 23:50") ---
+
+        sorted_persian_weekdays = sorted(PERSIAN_WEEKDAYS, key=len, reverse=True)
         parsed_weekday_from_str = None
-        time_str_after_weekday = None
+        remainder_str_after_weekday = original_time_str
 
-        if len(parts) >= 2: 
-            potential_two_word_wd = f"{parts[0]} {parts[1]}"
-            if potential_two_word_wd in PERSIAN_WEEKDAYS:
-                parsed_weekday_from_str = potential_two_word_wd
-                time_str_after_weekday = " ".join(parts[2:])
-            elif parts[0] in PERSIAN_WEEKDAYS:
-                parsed_weekday_from_str = parts[0]
-                time_str_after_weekday = " ".join(parts[1:])
+        for wd in sorted_persian_weekdays:
+            if original_time_str.startswith(wd):
+                parsed_weekday_from_str = wd
+                remainder_str_after_weekday = original_time_str[len(wd):].strip()
+                break
         
-        if parsed_weekday_from_str and time_str_after_weekday:
-            actual_time_hh_mm = None
-            for time_candidate_part in time_str_after_weekday.split():
-                if ':' in time_candidate_part:
-                    try:
-                        cleaned_candidate = time_candidate_part.split('/')[0]
-                        if cleaned_candidate.count(':') > 1:
-                            cleaned_candidate = ':'.join(cleaned_candidate.split(':')[:2])
-                        datetime.strptime(cleaned_candidate, '%H:%M')
-                        actual_time_hh_mm = cleaned_candidate
-                        break
-                    except ValueError:
-                        continue
-            
-            if not actual_time_hh_mm:
-                logging.warning(f"Identified weekday '{parsed_weekday_from_str}' in '{original_time_str}', but couldn't extract valid HH:MM from remaining '{time_str_after_weekday}'.")
-            else:
+        if parsed_weekday_from_str:
+            time_match_after_weekday = re.search(r"(\d{1,2}:\d{1,2})", remainder_str_after_weekday)
+            if time_match_after_weekday:
+                hh_mm_str = time_match_after_weekday.group(1)
                 try:
-                    time_obj = datetime.strptime(actual_time_hh_mm, '%H:%M').time()
+                    time_obj = datetime.strptime(hh_mm_str, '%H:%M').time()
                     reference_gregorian_date = base_date.date() if base_date else datetime.now().date()
                     
                     gregorian_weekday_of_ref_date = reference_gregorian_date.weekday() 
@@ -144,73 +109,56 @@ class Database:
                     raw_days_difference = (persian_weekday_index_from_input - persian_weekday_index_of_ref_date + 7) % 7 
                     
                     target_days_offset = 0
-                    if raw_days_difference == 0: 
-                        target_days_offset = 0
-                    elif raw_days_difference == 1: 
-                        target_days_offset = 1
-                    elif raw_days_difference == 2: 
-                        target_days_offset = 2
-                    elif raw_days_difference == 6: 
-                        target_days_offset = -1
-                    elif raw_days_difference == 5: 
-                        target_days_offset = -2
+                    if raw_days_difference == 0: target_days_offset = 0
+                    elif raw_days_difference == 1: target_days_offset = 1
+                    elif raw_days_difference == 2: target_days_offset = 2
+                    elif raw_days_difference == 6: target_days_offset = -1
+                    elif raw_days_difference == 5: target_days_offset = -2
                     else:
-                        logging.warning(
-                            f"Invalid weekday difference for '{original_time_str}'. "
-                            f"Input weekday: '{parsed_weekday_from_str}' (index {persian_weekday_index_from_input}), "
-                            f"Reference date ({reference_gregorian_date.strftime('%Y-%m-%d')}) weekday: '{PERSIAN_WEEKDAYS[persian_weekday_index_of_ref_date]}' (index {persian_weekday_index_of_ref_date}). "
-                            f"Raw diff: {raw_days_difference}. Must be within +/-2 days of the reference date."
-                        )
-                        return None 
+                        logging.warning(f"Invalid weekday diff for '{original_time_str}'. Weekday: '{parsed_weekday_from_str}'.")
+                        return None, None
                         
                     target_gregorian_date = reference_gregorian_date + timedelta(days=target_days_offset)
-                    final_dt = datetime.combine(target_gregorian_date, time_obj)
-                    logging.debug(f"Parsed weekday+time: '{original_time_str}' (weekday '{parsed_weekday_from_str}', time '{actual_time_hh_mm}') relative to {reference_gregorian_date.strftime('%Y-%m-%d')} with offset {target_days_offset} -> {final_dt.strftime('%Y-%m-%d %H:%M')}")
-                    return final_dt
-                    
+                    dt_result = datetime.combine(target_gregorian_date, time_obj)
+                    logging.debug(f"Parsed as 'weekday_parsed': '{original_time_str}' -> {dt_result}")
+                    return dt_result, 'weekday_parsed'
                 except ValueError: 
-                    logging.warning(f"Persian weekday '{parsed_weekday_from_str}' from input '{original_time_str}' not found in defined PERSIAN_WEEKDAYS. Check for character mismatches (e.g., YEH types).")
+                    logging.warning(f"Extracted weekday '{parsed_weekday_from_str}' but failed to parse time '{hh_mm_str}' from '{original_time_str}'.")
                 except Exception as e:
-                    logging.error(f"Error processing weekday '{parsed_weekday_from_str}' and time '{actual_time_hh_mm}' from '{original_time_str}': {str(e)}")
-                    return None
+                    logging.error(f"Error processing weekday '{parsed_weekday_from_str}' and time '{hh_mm_str}' from '{original_time_str}': {str(e)}")
+                    return None, None
+            else:
+                logging.debug(f"Found weekday '{parsed_weekday_from_str}' but no HH:MM in remainder '{remainder_str_after_weekday}'.")
 
-        # --- 3. Fallback: No identifiable Persian date or weekday prefix ---
-        logging.debug(f"No full Persian date or recognized Persian weekday prefix in '{original_time_str}'. Falling back to _parse_time.")
+        logging.debug(f"No full date or leading weekday in '{original_time_str}'. Falling back to _parse_time.")
         return self._parse_time(original_time_str, base_date)
 
 
-    def _parse_time(self, time_str: str, base_date: Optional[datetime] = None) -> Optional[datetime]:
-        """Convert time string (assumed HH:MM) to datetime, using base_date for the date part."""
+    def _parse_time(self, time_str: str, base_date: Optional[datetime] = None) -> Tuple[Optional[datetime], Optional[str]]:
+        """Convert time string (extracting HH:MM with regex) to datetime, using base_date for the date part."""
         if not time_str or not isinstance(time_str, str):
-            return None
+            return None, None
             
-        time_parts = time_str.split()
-        if not time_parts:
-            return None
-            
-        time_str_component = None
-        for part in reversed(time_parts):
-            if ':' in part:
-                time_str_component = part
-                break
+        time_match = re.search(r"(\d{1,2}:\d{1,2})", time_str)
         
-        if not time_str_component:
-            logging.warning(f"_parse_time: No ':' found in time string parts of '{time_str}'")
-            return None
+        if not time_match:
+            logging.warning(f"_parse_time: No HH:MM pattern in '{time_str}'.")
+            return None, None
 
+        time_str_component = time_match.group(1)
         time_str_component = time_str_component.split('/')[0]
-        if time_str_component.count(':') > 1:
+        if time_str_component.count(':') > 1: 
             time_str_component = ':'.join(time_str_component.split(':')[:2])
             
         try:
             time_obj = datetime.strptime(time_str_component, '%H:%M').time()
             reference_date_part = base_date.date() if base_date else datetime.now().date()
-            final_dt = datetime.combine(reference_date_part, time_obj)
-            logging.debug(f"_parse_time: Parsed '{time_str}' (component '{time_str_component}') with base_date {reference_date_part.strftime('%Y-%m-%d')} -> {final_dt.strftime('%Y-%m-%d %H:%M')}")
-            return final_dt
+            dt_result = datetime.combine(reference_date_part, time_obj)
+            logging.debug(f"Parsed as 'time_only_fallback': '{time_str}' (extracted HH:MM '{time_str_component}') with base_date {reference_date_part.strftime('%Y-%m-%d')} -> {dt_result}")
+            return dt_result, 'time_only_fallback'
         except ValueError as e:
-            logging.warning(f"_parse_time: Failed to parse time component '{time_str_component}' from '{time_str}': {str(e)}")
-            return None
+            logging.warning(f"_parse_time: Failed to parse extracted time '{time_str_component}' from '{time_str}': {str(e)}")
+            return None, None
 
     def _get_or_create_airport(self, airport_name: str) -> int:
         """Get or create airport and return its ID"""
@@ -246,10 +194,26 @@ class Database:
                         scheduled_time_str = str(row.get('scheduled_time')).strip() if pd.notna(row.get('scheduled_time')) and str(row.get('scheduled_time')).strip() else None
                         actual_time_str = str(row.get('actual_time')).strip() if pd.notna(row.get('actual_time')) and str(row.get('actual_time')).strip() else None
 
-                        scheduled_time = self._parse_time_with_weekday(scheduled_time_str, base_date) if scheduled_time_str else None
-                        actual_time = self._parse_time_with_weekday(actual_time_str, base_date) if actual_time_str else None
+                        scheduled_time, _ = self._parse_time_with_weekday(scheduled_time_str, base_date) if scheduled_time_str else (None, None)
+                        actual_time, actual_time_date_source = self._parse_time_with_weekday(actual_time_str, base_date) if actual_time_str else (None, None)
                         
-                        if not scheduled_time:
+                        # --- Heuristic for actual_time adjustment if its date was from base_date fallback ---
+                        if scheduled_time and actual_time and actual_time_date_source == 'time_only_fallback':
+                            # If actual_time's date was derived from base_date (because actual_time_str was HH:MM only)
+                            # and it's significantly earlier than scheduled_time, assume it's for the next day.
+                            if actual_time < (scheduled_time - timedelta(hours=3)): # Threshold can be adjusted
+                                adjusted_actual_time = actual_time + timedelta(days=1)
+                                logging.info(
+                                    f"Adjusted actual_time for flight {row.get('flight_number', 'N/A')} (heuristic: time_only_fallback, next day): "
+                                    f"Original actual_str='{actual_time_str}', "
+                                    f"Scheduled='{scheduled_time.strftime('%Y-%m-%d %H:%M')}', "
+                                    f"Initial actual_parse='{actual_time.strftime('%Y-%m-%d %H:%M')}', "
+                                    f"Final actual='{adjusted_actual_time.strftime('%Y-%m-%d %H:%M')}'"
+                                )
+                                actual_time = adjusted_actual_time
+                        # --- End of actual_time adjustment heuristic ---
+                        
+                        if not scheduled_time: 
                             logging.warning(f"Could not parse scheduled_time '{row.get('scheduled_time')}' for flight {row.get('flight_number', 'N/A')}. Row will be inserted with NULL scheduled_time if DB allows.")
 
                         flight_type_val = str(row.get('flight_type', '')).lower()
@@ -289,7 +253,7 @@ class Database:
                             """, (
                                 scheduled_time, airline, flight_number,
                                 origin_val, status, counter,
-                                actual_time, register, aircraft,
+                                actual_time, register, aircraft, 
                                 airport_id, is_international
                             ))
                         else: 
@@ -312,13 +276,13 @@ class Database:
                             """, (
                                 scheduled_time, airline, flight_number,
                                 destination_val, status, counter,
-                                actual_time, register, aircraft,
+                                actual_time, register, aircraft, 
                                 airport_id, is_international
                             ))
                         inserted_count += 1
                     except psycopg2.Error as db_err:
                          logging.error(f"Database error inserting flight {row.get('flight_number', 'UNKNOWN')}: {db_err}. SQL was: {cur.query.decode() if cur.query else 'N/A'}")
-                         raise 
+                         continue 
                     except Exception as e:
                         logging.error(f"General error inserting flight {row.get('flight_number', 'UNKNOWN')} (Row data: {row.to_dict()}): {str(e)}", exc_info=True)
                         continue 
@@ -339,40 +303,25 @@ class Database:
                     if not time_str: 
                         return '' 
                     
-                    temp_parts = time_str.split()
-                    has_persian_date = False
-                    for part in temp_parts:
-                        if part.count('-') == 2 and len(part.split('-')) == 3:
-                            try:
-                                year, month, day = map(int, part.split('-'))
-                                if 1300 <= year <= 1500:
-                                    jdatetime.date(year, month, day)
-                                    has_persian_date = True
-                                    break
-                            except (ValueError, Exception): 
-                                pass 
-                    if has_persian_date:
-                        return time_str
-
+                    if re.search(r"\d{4}-\d{1,2}-\d{1,2}", time_str): 
+                        return time_str 
                     if any(persian_wd in time_str for persian_wd in PERSIAN_WEEKDAYS):
                         return time_str
 
                     if ':' in time_str:
-                        logging.debug(f"Prepending '{persian_weekday_of_base}' to time '{time_str}' from CSV based on base_date {base_date.strftime('%Y-%m-%d')}")
+                        logging.debug(f"Prepending '{persian_weekday_of_base}' to time '{time_str}' from CSV for scheduled_time based on base_date {base_date.strftime('%Y-%m-%d')}")
                         return f"{persian_weekday_of_base} {time_str}"
                     
-                    return time_str
+                    return time_str 
 
                 if 'scheduled_time' in df.columns:
                     df['scheduled_time'] = df['scheduled_time'].apply(_prepend_base_weekday_if_needed)
-                if 'actual_time' in df.columns:
-                    df['actual_time'] = df['actual_time'].apply(_prepend_base_weekday_if_needed)
             
             expected_cols = ['airport', 'scheduled_time', 'actual_time', 'flight_type', 'airline', 
                              'flight_number', 'destination_or_origin', 'status', 'counter', 'register', 'aircraft']
             for col in expected_cols:
                 if col not in df.columns:
-                    df[col] = '' # Add missing columns as empty strings
+                    df[col] = '' 
 
             df['destination'] = df.apply(
                 lambda r: r.get('destination_or_origin', '') if 'departure' in str(r.get('flight_type', '')).lower() else '',
