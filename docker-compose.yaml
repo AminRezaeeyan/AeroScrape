@@ -1,0 +1,155 @@
+version: '3.8'
+
+networks:
+  flight_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mlflow_artifacts:
+  airflow_logs: 
+  airflow_dags:dels.
+
+services:
+  db:
+    image: postgres:13
+    container_name: flight_db
+    env_file:
+      - .env 
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - ./init/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - flight_network 
+
+  mlflow:
+    build: . 
+    container_name: mlflow_server
+    env_file:
+      - .env 
+    environment:
+    command: >
+      sh -c "pip install mlflow && # Ensure mlflow is installed in this container
+             mlflow db upgrade sqlite:///mlruns/mlruns.db && # Ensure DB schema is up-to-date
+             mlflow server \
+               --backend-store-uri sqlite:///mlruns/mlruns.db \
+               --default-artifact-root /mlruns \
+               --host 0.0.0.0"
+    volumes:
+      - ./mlruns:/mlruns
+    ports:
+      - "5000:5000" 
+    networks:
+      - flight_network 
+    depends_on:
+      - db 
+
+  airflow-webserver:
+    build: .
+    container_name: airflow_webserver
+    env_file:
+      - .env 
+    environment:
+      - AIRFLOW_HOME=/opt/airflow 
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor 
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${DB_USER}:${DB_PASSWORD}@db:${DB_PORT}/${DB_NAME}
+      - AIRFLOW__WEBSERVER__RBAC=True 
+      - AIRFLOW__WEBSERVER__WEB_SERVER_PORT=8080
+      - MLFLOW_TRACKING_URI=http://mlflow:5000 # Tasks will use this to reach MLflow service
+      - AIRFLOW__CORE__LOGGING_LEVEL=INFO
+    volumes:
+      - ./dags:/opt/airflow/dags 
+      - ./logs:/opt/airflow/logs 
+      - ./mlruns:/opt/airflow/mlruns 
+      - ./data:/opt/airflow/data 
+      - ./models:/opt/airflow/models 
+      - ./config.yaml:/opt/airflow/config.yaml 
+      - ./scripts:/opt/airflow/scripts 
+      - ./utils:/opt/airflow/utils 
+    ports:
+      - "8080:8080"
+    networks:
+      - flight_network
+    depends_on:
+      - db 
+      - mlflow 
+    command: webserver 
+
+  airflow-scheduler:
+    build: .
+    container_name: airflow_scheduler
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW_HOME=/opt/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${DB_USER}:${DB_PASSWORD}@db:${DB_PORT}/${DB_NAME}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - AIRFLOW__CORE__LOGGING_LEVEL=INFO
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./mlruns:/opt/airflow/mlruns
+      - ./data:/opt/airflow/data
+      - ./models:/opt/airflow/models
+      - ./config.yaml:/opt/airflow/config.yaml
+      - ./scripts:/opt/airflow/scripts
+      - ./utils:/opt/airflow/utils
+    networks:
+      - flight_network
+    depends_on:
+      - db 
+      - mlflow 
+      - airflow-webserver 
+    command: scheduler 
+
+  api:
+    build: . 
+    container_name: flight_api
+    env_file:
+      - .env 
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000 
+    command: uvicorn src.api_service:app --host 0.0.0.0 --port 8000
+    volumes:
+      - .:/app
+      - ./models:/app/models
+      - ./mlruns:/app/mlruns
+      - ./config.yaml:/app/config.yaml 
+      - ./utils:/app/utils
+    ports:
+      - "8000:8000"
+    networks:
+      - flight_network
+    depends_on:
+      - mlflow 
+
+  scraper:
+    build: .
+    container_name: flight_scraper_cli
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=db 
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000 
+    command: python src/cli.py 
+    volumes:
+      - .:/app 
+      - ./data:/app/data 
+      - ./logs:/app/logs 
+      - ./mlruns:/app/mlruns 
+    networks:
+      - flight_network
+    depends_on:
+      - db 
+      - mlflow 
