@@ -1,13 +1,13 @@
 {
     "regression": {
-        "n_estimators": 940,
-        "learning_rate": 0.015103739890824445,
-        "num_leaves": 277,
+        "n_estimators": 122,
+        "learning_rate": 0.044175221824953564,
+        "num_leaves": 143,
         "max_depth": 12,
-        "min_child_samples": 21
+        "min_child_samples": 20
     },
     "classification": {
-        "C": 0.07430322977333233,
-        "penalty": "l2"
+        "C": 0.10959254352786107,
+        "penalty": "l1"
     }
 }

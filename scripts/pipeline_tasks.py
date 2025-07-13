@@ -19,6 +19,8 @@ from scripts.model_trainer import (
     train_classification_model, evaluate_classification_model,
     # save_model, save_metrics # MLflow will handle saving, or keep if redundant saving is desired
 )
+from .association_miner import find_association_rules
+
 # Import save_model and save_metrics if you still want to save them outside MLflow
 from scripts.model_trainer import save_model as save_model_locally 
 from scripts.model_trainer import save_metrics as save_metrics_locally
@@ -321,6 +323,29 @@ def task_train_evaluate_classification(**kwargs):
         logger.info("Classification model logged and registered with MLflow.")
 
     logger.info("Classification model training and MLflow logging complete.")
+
+def task_run_association_mining():
+    """
+    Airflow task to run the FP-Growth association Rule mining Task
+    """
+    logging.info("--- Starting Association Rule Mining Task ---")
+    config = load_config()
+
+    cleaned_data_path = os.path.join(config['data']['cleaned']['path'], config['data']['cleaned']['filename'])
+    output_path = os.path.join(config['data']['results']['path'], config['data']['results']['association_rules_filename'])
+    
+    # Create results directory if it doesn't exist
+    os.makedirs(config['data']['results']['path'], exist_ok=True)
+    
+    find_association_rules(
+        data_path=cleaned_data_path,
+        output_path=output_path,
+        min_support=config['association_mining']['min_support'],
+        min_threshold=config['association_mining']['min_threshold']
+    )
+    logging.info("--- Association Rule Mining Task Completed ---")
+
+
 
 
 def task_cleanup_processed_data(**kwargs):

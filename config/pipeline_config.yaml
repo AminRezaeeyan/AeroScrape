@@ -1,4 +1,4 @@
-raw_data_path : "data/all-data(1).csv"
+raw_data_path : "data/final.csv"
 cleaned_data_path: "data/cleaned_flight_data.csv"
 processed_data_path : "data/processed_data.pkl"
 model_output_dir : "models/"
@@ -40,6 +40,18 @@ numerical_features :
 target_regression: "delay_minutes"
 target_classification : "is_delayed"
 
+data: 
+  cleaned:
+    path: "data/"
+    filename: "cleaned_flight_data.csv"
+  results:
+    path: "data/mining/results"
+    association_rules_filename: "assiciation_rules.csv"
+
+
+association_mining:
+  min_support: 0.02
+  min_threshold: 1
 
 # Model parameters
 lgbm_params:

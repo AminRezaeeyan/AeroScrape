@@ -1,17 +1,15 @@
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.operators.python import PythonOperator  # pylint: disable=import-error
 from airflow.models.param import Param
 from datetime import datetime, timedelta
 import sys
 import os
 
-# Add the project root and scripts directory to Python's path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS_DIR = os.path.join(PROJECT_ROOT, "scripts")
 sys.path.insert(0, SCRIPTS_DIR)
 sys.path.insert(0, PROJECT_ROOT)
 
-# Import the task functions from your pipeline_tasks script
 try:
     from scripts.pipeline_tasks import (
         task_validate_raw_data,
@@ -20,6 +18,7 @@ try:
         task_tune_hyperparameters,
         task_train_evaluate_regression,
         task_train_evaluate_classification,
+        task_run_association_mining,
         task_cleanup_processed_data
     )
     print("Successfully imported pipeline tasks for Airflow DAG.")
@@ -39,7 +38,6 @@ default_args = {
     'start_date': datetime(2024, 6, 1),
 }
 
-# Define the DAG
 with DAG(
     dag_id='flight_delay_prediction_pipeline',
     default_args=default_args,
@@ -92,6 +90,12 @@ with DAG(
         python_callable=task_train_evaluate_classification,
     )
 
+    # Task 5c: Run association Mining
+    association_mining_op = PythonOperator(
+        task_id="run_association_task",
+        python_callable=task_run_association_mining,
+    )
+
     # Task 6: Clean up intermediate data files
     cleanup_op = PythonOperator(
         task_id='cleanup_processed_data_task',
@@ -102,4 +106,5 @@ with DAG(
     # --- Define the full dependency chain ---
     validate_op >> clean_data_op >> preprocess_op >> tune_op
     tune_op >> [train_eval_regression_op, train_eval_classification_op]
-    [train_eval_regression_op, train_eval_classification_op] >> cleanup_op
+    clean_data_op >> association_mining_op
+    [train_eval_regression_op, train_eval_classification_op, association_mining_op] >> cleanup_op

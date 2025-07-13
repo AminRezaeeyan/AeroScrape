@@ -2,6 +2,7 @@
 beautifulsoup4==4.12.2
 psycopg2-binary==2.9.9
 # jdatetime==4.1.1
+mlxtend==0.23.4
 a2wsgi==1.10.8
 aiologic==0.14.0
 aiosqlite==0.21.0
