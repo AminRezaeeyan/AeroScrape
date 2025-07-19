@@ -90,6 +90,17 @@ data_paths:
   processed_data_dir: "data/processed/"
   best_params: "data/processed/best_params.json"
 
+# Association Mining
+association_mining:
+  min_support: 0.02
+  min_threshold: 1
+  cleaned:
+    path: "data/"
+    filename: "cleaned_flight_data.csv"
+  results:
+    path: "data/mining/results"
+    association_rules_filename: "assiciation_rules.csv"
+
 # Machine Learning Pipeline Configurations
 pipeline:
   model_registry_name_regression: "flight-delay-regressor"

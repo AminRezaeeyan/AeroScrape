@@ -18,6 +18,7 @@ try:
         task_tune_hyperparameters,
         task_train_evaluate_regression,
         task_train_evaluate_classification,
+        task_run_association_mining,
         task_cleanup_processed_data
     )
     import logging
@@ -99,6 +100,13 @@ with DAG(
         provide_context=True,
     )
 
+    # Task 5c: Run association Mining
+    association_mining_op = PythonOperator(
+        task_id="run_association_task",
+        python_callable=task_run_association_mining,
+    )
+
+
     # Task 6: Clean up intermediate data files
     cleanup_op = PythonOperator(
         task_id='cleanup_processed_data_task',
@@ -110,4 +118,5 @@ with DAG(
     # Define the task dependencies
     validate_op >> clean_data_op >> preprocess_op >> tune_op
     tune_op >> [train_eval_regression_op, train_eval_classification_op]
-    [train_eval_regression_op, train_eval_classification_op] >> cleanup_op
+    clean_data_op >> association_mining_op
+    [train_eval_regression_op, train_eval_classification_op, association_mining_op] >> cleanup_op
