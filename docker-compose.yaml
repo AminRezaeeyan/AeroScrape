@@ -177,3 +177,21 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_started
+  frontend:
+      build: .
+      container_name: flight_frontend
+      environment:
+        - BACKEND_URL=http://api:8000/predict
+      working_dir: /opt/airflow
+      command: streamlit run src/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+      volumes:
+        - ./src:/opt/airflow/src
+        - ./config.yaml:/opt/airflow/config.yaml
+        - ./utils:/opt/airflow/utils
+      ports:
+        - "8501:8501"
+      networks:
+        - flight_network
+      depends_on:
+        api:
+          condition: service_started
