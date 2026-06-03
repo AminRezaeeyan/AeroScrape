@@ -236,13 +236,29 @@ def task_train_evaluate_regression(**kwargs):
         serializable_metrics = {k: (float(v) if hasattr(v, 'item') else v) for k, v in reg_metrics.items()}
         mlflow.log_metrics(serializable_metrics)
         logger.info(f"Logged serializable metrics to MLflow: {serializable_metrics}")
-
-        mlflow.sklearn.log_model(
+        model_info = mlflow.sklearn.log_model(
             sk_model=reg_model,
             artifact_path="lgbm-regressor",
             registered_model_name="flight-delay-regressor"
         )
         logger.info("Regression model logged and registered with MLflow.")
+
+        # --- NEW: Assign alias programmatically ---
+        try:
+            from mlflow import MlflowClient
+            client = MlflowClient()
+            new_version = model_info.registered_model_version
+            model_alias = app_config['pipeline'].get('model_alias_for_api', 'champion')
+            
+            client.set_registered_model_alias(
+                name="flight-delay-regressor",
+                alias=model_alias,
+                version=new_version
+            )
+            logger.info(f"Successfully assigned alias '{model_alias}' to model version {new_version}.")
+        except Exception as alias_err:
+            logger.warning(f"Failed to programmatically assign alias: {alias_err}. "
+                           "You may need to assign it manually via the MLflow UI.")
 
     save_metrics(reg_metrics, "lgbm_regressor", subfolder="regression")
     save_model(reg_model, "lgbm_regressor", subfolder="regression")
@@ -324,12 +340,15 @@ def task_run_association_mining():
     """
     logging.info("--- Starting Association Rule Mining Task ---")
     config = get_app_config()
+    project_root = get_project_root() # <-- Added this
 
-    cleaned_data_path = os.path.join(config['association_mining']['cleaned']['path'], config['association_mining']['cleaned']['filename'])
-    output_path = os.path.join(config['association_mining']['results']['path'], config['association_mining']['results']['association_rules_filename'])
+    # <-- Added project_root to these paths to make them absolute
+    cleaned_data_path = os.path.join(project_root, config['data_paths']['cleaned_data'])
+    results_dir = os.path.join(project_root, config['association_mining']['results']['path'])
+    output_path = os.path.join(results_dir, config['association_mining']['results']['association_rules_filename'])
 
     # Create results directory if it doesn't exist
-    os.makedirs(config['association_mining']['results']['path'], exist_ok=True)
+    os.makedirs(results_dir, exist_ok=True)
 
     find_association_rules(
         data_path=cleaned_data_path,
@@ -338,6 +357,7 @@ def task_run_association_mining():
         min_threshold=config['association_mining']['min_threshold']
     )
     logging.info("--- Association Rule Mining Task Completed ---")
+
 
 def task_cleanup_processed_data(**kwargs):
     logger.info("Starting task: Cleanup Processed Data")

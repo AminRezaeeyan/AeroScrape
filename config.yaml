@@ -1,6 +1,6 @@
 # MLflow Configuration
 mlflow:
-  tracking_uri: "http://127.0.0.1:5000" # MLflow Tracking Server URI
+  tracking_uri: "http://mlflow:5000" # MLflow Tracking Server URI
   experiment_name: "flight_delay_prediction"
 
 
@@ -104,6 +104,7 @@ association_mining:
 # Machine Learning Pipeline Configurations
 pipeline:
   model_registry_name_regression: "flight-delay-regressor"
+  model_alias_for_api: "production"
   model_registry_name_classification: "flight-delay-classifier"
   preprocessor_filename: "preprocessor.joblib"
   model_stage_for_api: "Production"

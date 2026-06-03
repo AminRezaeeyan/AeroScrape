@@ -55,9 +55,18 @@ def get_app_config():
             logger.critical(f"Environment variable '{key}' is required but not set. Check your .env file.")
             raise ValueError(f"Missing essential environment variable: {key}")
 
-    if 'mlflow' not in final_config or 'tracking_uri' not in final_config['mlflow']:
-        logger.critical("MLflow tracking_uri is missing from config.yaml under the 'mlflow' section.")
-        raise ValueError("Missing MLflow tracking_uri configuration in config.yaml")
+    # Prioritize MLflow tracking URI from environment variables if set (useful for Docker container networks)
+    env_mlflow_uri = os.getenv("MLFLOW_TRACKING_URI")
+    if 'mlflow' not in final_config:
+        final_config['mlflow'] = {}
+
+    if env_mlflow_uri:
+        logger.info(f"Using MLflow tracking URI from environment variable: {env_mlflow_uri}")
+        final_config['mlflow']['tracking_uri'] = env_mlflow_uri
+
+    if 'tracking_uri' not in final_config['mlflow']:
+        logger.critical("MLflow tracking_uri is missing from config.yaml under the 'mlflow' section and no environment variable is set.")
+        raise ValueError("Missing MLflow tracking_uri configuration")
 
     final_config['database'] = db_config
 
@@ -65,9 +74,6 @@ def get_app_config():
     logger.info("Application configuration loaded and cached.")
     return _app_config_cache
 
-# --- Global Access Point ---
-# Call get_app_config once to populate the cache when this module is first imported.
-# This ensures that any subsequent calls to get_app_config are fast.
 try:
     _ = get_app_config()
 except Exception as e:
