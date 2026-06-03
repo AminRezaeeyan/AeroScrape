@@ -1,46 +1,48 @@
-# Python generated files
+# Python Generated Files
+
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
 
-# Virtual environment directories
+# Virtual Environments
 /venv/
-/flight_env/ # Your Python virtual environment folder
+/flight_env/
+.env
 
-# Log files
-/logs/ # Ignore the entire logs directory
-*.log  # Ignore any .log files elsewhere
+#  Dynamic ML & Data Artifacts (Crucial)
+# Ignore raw, cleaned, mined, and processed datasets
+/data/**/*.csv
+/data/processed/
 
-# Database specific files
-# This is for any SQLite or other local database files created directly within the project
-*.sqlite
-*.db
+# Ignore local compiled model binaries and local metrics evaluations
+/models/**/*.joblib
+/models/**/*.json
+/models/preprocessor.joblib
 
-# Environment variable files with secrets
-.env                 # IGNORE the actual .env file which contains secrets
+# Ignore the entire MLflow run database, tags, and tracking artifact logs
+/mlruns/
 
-# Docker specific (useful even if not using Docker now, for future-proofing)
-*.egg-info/          # Python distribution metadata
-build/               # Build artifacts
-dist/                # Distribution packages
+# Logs and Process State Files
+# Ignore local runtime application logs
+/logs/
+*.log
 
-# IDE and Editor specific files
-.idea/               # JetBrains IDEs (e.g., PyCharm)
-.vscode/             # VS Code settings
-.DS_Store            # macOS specific files
-*.swp                # Vim swap files
-*.bak                # Backup files
-*.tmp                # Temporary files
+# Ignore Airflow runtime PID state files
+*.pid
 
-# Test and Linting caches/reports
-.mypy_cache/         # Mypy static type checker cache
-.pytest_cache/       # Pytest cache directory
-.ruff_cache/         # Ruff linter cache
-htmlcov/             # Coverage reports
-
-# MLflow generated data
-/mlruns/             # IGNORE the entire MLflow tracking and artifact store directory
-
-webserver.pid        # Airflow webserver PID file
-scheduler.pid        # Airflow scheduler PID file
+# IDE, OS, and Jupyter Notebook garbage
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.bak
+*.tmp
+.ipynb_checkpoints/

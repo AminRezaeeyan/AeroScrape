@@ -1,5 +1,3 @@
-version: '3.8'
-
 networks:
   flight_network:
     driver: bridge
@@ -7,15 +5,13 @@ networks:
 volumes:
   postgres_data:
   mlflow_artifacts:
-  airflow_logs: 
-  airflow_dags:dels.
 
 services:
   db:
     image: postgres:13
     container_name: flight_db
     env_file:
-      - .env 
+      - .env
     environment:
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PASSWORD}
@@ -26,60 +22,78 @@ services:
     ports:
       - "5432:5432"
     networks:
-      - flight_network 
+      - flight_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   mlflow:
-    build: . 
+    build: .
     container_name: mlflow_server
     env_file:
-      - .env 
-    environment:
-    command: >
-      sh -c "pip install mlflow && # Ensure mlflow is installed in this container
-             mlflow db upgrade sqlite:///mlruns/mlruns.db && # Ensure DB schema is up-to-date
-             mlflow server \
-               --backend-store-uri sqlite:///mlruns/mlruns.db \
-               --default-artifact-root /mlruns \
-               --host 0.0.0.0"
+      - .env
+    command: mlflow server --backend-store-uri sqlite:////mlruns/mlruns.db --default-artifact-root /mlruns --host 0.0.0.0
     volumes:
       - ./mlruns:/mlruns
     ports:
-      - "5000:5000" 
+      - "5000:5000"
     networks:
-      - flight_network 
+      - flight_network
     depends_on:
-      - db 
+      db:
+        condition: service_healthy
 
   airflow-webserver:
     build: .
     container_name: airflow_webserver
     env_file:
-      - .env 
+      - .env
     environment:
-      - AIRFLOW_HOME=/opt/airflow 
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor 
+      - AIRFLOW_HOME=/opt/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${DB_USER}:${DB_PASSWORD}@db:${DB_PORT}/${DB_NAME}
-      - AIRFLOW__WEBSERVER__RBAC=True 
+      - AIRFLOW__WEBSERVER__RBAC=True
       - AIRFLOW__WEBSERVER__WEB_SERVER_PORT=8080
-      - MLFLOW_TRACKING_URI=http://mlflow:5000 # Tasks will use this to reach MLflow service
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
       - AIRFLOW__CORE__LOGGING_LEVEL=INFO
     volumes:
-      - ./dags:/opt/airflow/dags 
-      - ./logs:/opt/airflow/logs 
-      - ./mlruns:/opt/airflow/mlruns 
-      - ./data:/opt/airflow/data 
-      - ./models:/opt/airflow/models 
-      - ./config.yaml:/opt/airflow/config.yaml 
-      - ./scripts:/opt/airflow/scripts 
-      - ./utils:/opt/airflow/utils 
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./mlruns:/mlruns             
+      - ./data:/opt/airflow/data
+      - ./models:/opt/airflow/models
+      - ./config.yaml:/opt/airflow/config.yaml
+      - ./scripts:/opt/airflow/scripts
+      - ./utils:/opt/airflow/utils
     ports:
       - "8080:8080"
     networks:
       - flight_network
     depends_on:
-      - db 
-      - mlflow 
-    command: webserver 
+      db:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    entrypoint: |
+          sh -c "
+            airflow db init &&
+            (airflow users create \
+              --username admin \
+              --firstname admin \
+              --lastname admin \
+              --role Admin \
+              --email admin@example.com \
+              --password admin || true) &&
+            airflow webserver
+          "
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   airflow-scheduler:
     build: .
@@ -95,7 +109,7 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
-      - ./mlruns:/opt/airflow/mlruns
+      - ./mlruns:/mlruns            
       - ./data:/opt/airflow/data
       - ./models:/opt/airflow/models
       - ./config.yaml:/opt/airflow/config.yaml
@@ -104,31 +118,36 @@ services:
     networks:
       - flight_network
     depends_on:
-      - db 
-      - mlflow 
-      - airflow-webserver 
-    command: scheduler 
+      db:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+      airflow-webserver:
+        condition: service_healthy
+    command: airflow scheduler
 
   api:
-    build: . 
+    build: .
     container_name: flight_api
     env_file:
-      - .env 
+      - .env
     environment:
-      - MLFLOW_TRACKING_URI=http://mlflow:5000 
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    working_dir: /opt/airflow
     command: uvicorn src.api_service:app --host 0.0.0.0 --port 8000
     volumes:
-      - .:/app
-      - ./models:/app/models
-      - ./mlruns:/app/mlruns
-      - ./config.yaml:/app/config.yaml 
-      - ./utils:/app/utils
+      - ./src:/opt/airflow/src
+      - ./models:/opt/airflow/models
+      - ./mlruns:/mlruns           
+      - ./config.yaml:/opt/airflow/config.yaml
+      - ./utils:/opt/airflow/utils
     ports:
       - "8000:8000"
     networks:
       - flight_network
     depends_on:
-      - mlflow 
+      mlflow:
+        condition: service_started
 
   scraper:
     build: .
@@ -136,20 +155,25 @@ services:
     env_file:
       - .env
     environment:
-      - DB_HOST=db 
+      - DB_HOST=db
       - DB_PORT=${DB_PORT}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_NAME=${DB_NAME}
-      - MLFLOW_TRACKING_URI=http://mlflow:5000 
-    command: python src/cli.py 
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    working_dir: /opt/airflow
+    command: python src/cli.py
     volumes:
-      - .:/app 
-      - ./data:/app/data 
-      - ./logs:/app/logs 
-      - ./mlruns:/app/mlruns 
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+      - ./mlruns:/mlruns             
+      - ./utils:/opt/airflow/utils
+      - ./config.yaml:/opt/airflow/config.yaml
     networks:
       - flight_network
     depends_on:
-      - db 
-      - mlflow 
+      db:
+        condition: service_healthy
+      mlflow:
+        condition: service_started

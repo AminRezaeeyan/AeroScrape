@@ -16,6 +16,7 @@ def find_association_rules(data_path, output_path, min_support=0.01, min_thresho
         logger.info(f"Successfully loaded data. Shape: {df.shape}")
     except FileNotFoundError:
         logger.error(f"Data file not found at {data_path}, Halting Process")
+        raise
 
     # Feature selection
     df_assoc = df[['airline', 'destination_or_origin', 'aircraft', 'airport', 'scheduled_day_of_week', 'scheduled_season', 'scheduled_time_of_day', 'Early_OnTime_Late_Indicator']].copy()
