@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import os
+import pandas as pd
 from datetime import datetime
 
 # Configure Backend URL (Use container network hostname 'api' inside Docker)
@@ -51,20 +52,57 @@ if submit_btn:
     }
     
     try:
-        with st.spinner("Calculating delay prediction..."):
+        with st.spinner("Calculating delay prediction and feature impact (SHAP)..."):
             response = requests.post(BACKEND_URL, json=payload)
             
         if response.status_code == 200:
             result = response.json()
             delay = result["predicted_delay_minutes"]
             is_delayed = result["is_delayed"]
+            explainability = result.get("explainability", [])
             
             st.success("Analysis Complete!")
             
+            # 1. Main prediction display
             if is_delayed:
                 st.error(f"⚠️ Predicted Delay: {delay:.2f} minutes")
             else:
                 st.success(f"✅ On Time! Predicted Delay: {delay:.2f} minutes")
+                
+            # 2. SHAP Explainability Display
+            if explainability:
+                st.subheader("📊 Why did the model make this prediction? (SHAP)")
+                st.write("Below are the top factors that impacted this specific estimation:")
+                
+                pos_factors = [f for f in explainability if f["contribution"] > 0]
+                neg_factors = [f for f in explainability if f["contribution"] < 0]
+                
+                exp_col1, exp_col2 = st.columns(2)
+                
+                with exp_col1:
+                    st.markdown("**🔴 Factors Increasing Delay**")
+                    if pos_factors:
+                        for item in pos_factors[:5]:  # Show top 5
+                            st.write(f"- **{item['feature']}**: +{item['contribution']:.1f} mins")
+                    else:
+                        st.write("_No major delaying factors detected_")
+                        
+                with exp_col2:
+                    st.markdown("**🟢 Factors Reducing Delay**")
+                    if neg_factors:
+                        for item in neg_factors[:5]:  # Show top 5
+                            st.write(f"- **{item['feature']}**: {item['contribution']:.1f} mins")
+                    else:
+                        st.write("_No major reducing factors detected_")
+
+                # Optional: Render as a quick impact bar chart
+                st.markdown("---")
+                st.markdown("**Feature Impact Bar Chart**")
+                chart_data = pd.DataFrame(explainability).rename(
+                    columns={"feature": "Factor", "contribution": "Minutes Contribution"}
+                ).set_index("Factor")
+                st.bar_chart(chart_data)
+                
         else:
             st.error(f"Backend API returned an error: {response.text}")
             

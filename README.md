@@ -1,6 +1,6 @@
 # AeroScrape: End-to-End Flight Delay Prediction MLOps Pipeline
 
-AeroScrape is a comprehensive MLOps (Machine Learning Operations) project designed to scrape real-time flight data, store it, train machine learning models to predict flight delays, and serve these predictions via a RESTful API. The entire pipeline is orchestrated using Apache Airflow and leverages MLflow for experiment tracking and model management, all running in a modular and maintainable local environment.
+AeroScrape is a comprehensive MLOps (Machine Learning Operations) project designed to scrape real-time flight data, store it, train machine learning models to predict flight delays, and serve these predictions via a RESTful API. The entire pipeline is orchestrated using Apache Airflow, tracks experiment iterations via MLflow, and provides real-time explanations for predictions using SHAP (Explainable AI), served on a clean Streamlit interface.
 
 ![Airflow Tasks Screenshot](https://github.com/aminrezaeeyan/AeroScrape/blob/main/screenshots/airflow-tasks.png?raw=true)
 _Screenshot of the Airflow DAG orchestrating the ML pipeline._
@@ -12,6 +12,7 @@ _Screenshot of the Airflow DAG orchestrating the ML pipeline._
 -   [Architecture Overview](#architecture-overview)
 -   [Getting Started (Docker Compose - Recommended)](#getting-started-docker-compose---recommended)
 -   [Getting Started (Local Manual Setup)](#getting-started-local-manual-setup)
+-   [Inference & Explainability Interface](#inference--explainability-interface)
 -   [Usage Workflow](#usage-workflow)
 -   [Data Analysis with Apache Superset](#data-analysis-with-apache-superset)
 -   [MLflow Integration](#mlflow-integration)
@@ -35,8 +36,8 @@ _Screenshot of the Airflow DAG orchestrating the ML pipeline._
 * **MLflow Integration:**
     * **Experiment Tracking:** Logs all model training parameters, metrics, and artifacts.
     * **Model Registry:** Centralized management and versioning of trained models, with automated alias assignment (e.g., to "production").
-* **FastAPI Inference API:** Serves real-time flight delay predictions from the trained and registered ML models.
-* **Modular & Reproducible:** Clean project structure, dependency management via `requirements.txt`, and containerization-ready design.
+* **Explainable AI (SHAP):** Integrates individual feature contributions for every single prediction, identifying factors that decrease or increase flight delays.
+* **Inference Dashboard (Streamlit):** An interactive frontend to query predictions and visualize SHAP force contributions on a clean web UI.
 
 ## Architecture Overview
 
@@ -47,14 +48,15 @@ The AeroScrape project is built with a modular architecture, separating concerns
 3.  **ML Pipeline (Scripts):** A collection of Python scripts (`scripts/`) that perform the core ML workflow steps, from data validation to model training.
 4.  **Orchestration (Apache Airflow):** Airflow DAGs (`dags/`) define and schedule the execution of the ML pipeline scripts as a Directed Acyclic Graph.
 5.  **MLflow Tracking Server:** An MLflow instance (`mlflow_server` in Docker setup) that serves as a centralized repository for logging ML experiments, tracking metrics, and managing model versions in the Model Registry.
-6.  **Inference API (FastAPI):** A FastAPI application (`src/api_service.py`) that loads the best performing ML model from MLflow Model Registry and provides a RESTful endpoint for real-time predictions.
-7.  **Utilities (`utils/`):** A dedicated module for shared utility functions, including a robust configuration loader (`utils/config.py`) that handles both environment variables (`.env`) and structured YAML configuration (`config.yaml`).
+6.  **Inference API (FastAPI):** A FastAPI application (`src/api_service.py`) that loads the native ML model from MLflow Model Registry and provides a RESTful endpoint returning predictions along with real-time SHAP values.
+7.  **Inference Dashboard (Streamlit):** A user-friendly web interface (`src/streamlit_app.py`) allowing users to input flight details and examine predicted delays alongside contribution charts.
+8.  **Utilities (`utils/`):** A dedicated module for shared utility functions, including a robust configuration loader (`utils/config.py`) that handles both environment variables (`.env`) and structured YAML configuration (`config.yaml`).
 
 ---
 
 ## Getting Started (Docker Compose - Recommended)
 
-This is the easiest way to launch the entire MLOps environment. All components (Database, MLflow, Airflow Webserver, Airflow Scheduler, FastAPI, Scraper) are configured with aligned volumes to share models, metadata, and artifacts.
+This is the easiest way to launch the entire MLOps environment. All components (Database, MLflow, Airflow Webserver, Airflow Scheduler, FastAPI, Streamlit, Scraper) are configured with aligned volumes to share models, metadata, and artifacts.
 
 ### Prerequisites
 * **Docker** and **Docker Compose** installed on your host system.
@@ -93,10 +95,12 @@ This is the easiest way to launch the entire MLOps environment. All components (
    ```bash
    curl -X POST http://localhost:8000/reload
    ```
-   You can verify the API status by running:
-   ```bash
-   curl http://localhost:8000/health
-   ```
+
+6. **Access the Services:**
+   * **Inference Web UI (Streamlit):** `http://localhost:8501`
+   * **Inference REST API (FastAPI):** `http://localhost:8000` (API Docs at `/docs`)
+   * **Orchestrator (Apache Airflow):** `http://localhost:8080`
+   * **Experiment Tracking (MLflow Server):** `http://localhost:5000`
 
 ---
 
@@ -230,6 +234,34 @@ uvicorn src.api_service:app --host 0.0.0.0 --port 8000 --reload
 ```
 *Access docs at: `http://127.0.0.1:8000/docs`*
 
+### Running Streamlit Frontend Dashboard
+
+```bash
+streamlit run src/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+```
+*Access dashboard at: `http://localhost:8501`*
+
+---
+
+## Inference & Explainability Interface
+
+Our frontend dashboard provides a comprehensive evaluation of flight delay predictions. Beyond returning a numeric estimate, the backend computes individual feature importance using **SHAP**. This exposes exactly what factors are contributing to or preventing delays.
+
+### 🎥 Live Prediction Interface
+The interface allows users to select flight features and view estimated delays instantly.
+
+![Frontend Main Predictor Dashboard](screenshots/frontend-main.png?raw=true)
+
+_Streamlit web form predicting a 35.22-minute delay._
+
+
+### 📊 Feature Explainability Breakdown
+Our pipeline maps the numerical and categorical components to illustrate positive and negative contributors behind the prediction.
+
+![SHAP Explainability Results and Charts](screenshots/shap-explainability.png?raw=true)
+
+_SHAP breakdown of factors increasing or reducing delays alongside an interactive feature impact bar chart._
+
 ---
 
 ## Usage Workflow
@@ -244,7 +276,7 @@ uvicorn src.api_service:app --host 0.0.0.0 --port 8000 --reload
 3.  **Model Management:**
     * Access MLflow UI (`http://127.0.0.1:5000`) and ensure your model versions are promoted to stage/aliased to match your environment configs.
 4.  **Real-time Prediction:**
-    * Send prediction payloads to your FastAPI server (`http://localhost:8000/predict`).
+    * Send prediction payloads to your FastAPI server (`http://localhost:8000/predict`) or use the interactive Streamlit UI (`http://localhost:8501`).
 
 ---
 
@@ -303,7 +335,7 @@ The FastAPI service provides a RESTful API for real-time flight delay prediction
 
 ### `/predict` (POST)
 
-**Usage:** Predicts flight delay based on input flight details.
+**Usage:** Predicts flight delay based on input flight details and returns SHAP contributions.
 
 **Request Body Example:**
 
@@ -317,7 +349,7 @@ curl -X 'POST' \
     "airport": "فرودگاه مهرآباد",
     "destination_or_origin": "مشهد",
     "aircraft": "MD83",
-    "scheduled_datetime": "2026-06-03 14:30:00"
+    "scheduled_datetime": "2026-06-03 21:11:00"
   }'
 ```
 
@@ -325,8 +357,30 @@ curl -X 'POST' \
 
 ```json
 {
-  "predicted_delay_minutes": 28.97,
-  "is_delayed": true
+  "predicted_delay_minutes": 35.22,
+  "is_delayed": true,
+  "explainability": [
+    {
+      "feature": "Destination Or Origin: Mashhad",
+      "contribution": 5.3
+    },
+    {
+      "feature": "Day Of Week: Wednesday",
+      "contribution": 3.4
+    },
+    {
+      "feature": "Scheduled Hour Of Day",
+      "contribution": 2.5
+    },
+    {
+      "feature": "Aircraft: Md83",
+      "contribution": 1.9
+    },
+    {
+      "feature": "Airline: Caspian",
+      "contribution": -3.8
+    }
+  ]
 }
 ```
 
