@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from urllib.parse import urljoin
-from utils.config import get_app_config
+from aeroscrape.config import get_app_config
 
 def scrape_table(soup, table_id, airport_name):
     app_config = get_app_config()

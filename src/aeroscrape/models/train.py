@@ -1,11 +1,4 @@
 import os
-import sys
-
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-    
 import lightgbm as lgb
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
@@ -15,7 +8,7 @@ import json
 import logging
 import pandas as pd
 import numpy as np
-from utils.config import get_app_config
+from aeroscrape.config import get_app_config, resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +84,7 @@ def evaluate_classification_model(model, X_test, y_test):
 def save_model(model, model_name, subfolder=""):
     app_config = get_app_config()
     base_model_output_dir = app_config['pipeline']['model_output_dir']
-    current_file_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(current_file_dir)
-
-    model_dir = os.path.join(project_root, base_model_output_dir, subfolder)
+    model_dir = os.path.join(resolve_path(base_model_output_dir), subfolder)
     os.makedirs(model_dir, exist_ok=True)
 
     model_path = os.path.join(model_dir, f"{model_name}.joblib")
@@ -106,9 +96,7 @@ def save_metrics(metrics, model_name, subfolder=""):
     app_config = get_app_config() 
     base_model_output_dir = app_config['pipeline']['model_output_dir'] 
 
-    current_file_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(current_file_dir)
-    metrics_dir = os.path.join(project_root, base_model_output_dir, subfolder)
+    metrics_dir = os.path.join(resolve_path(base_model_output_dir), subfolder)
     os.makedirs(metrics_dir, exist_ok=True)
 
     metrics_path = os.path.join(metrics_dir, f"{model_name}_metrics.json")

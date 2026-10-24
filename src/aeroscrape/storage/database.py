@@ -5,7 +5,7 @@ from typing import List, Dict, Optional, Any, Tuple
 import pandas as pd
 import logging
 import jdatetime
-from utils.config import get_app_config
+from aeroscrape.config import get_db_settings
 import re
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,7 @@ PERSIAN_WEEKDAYS = ['شنبه', 'یکشنبه', 'دو شنبه', 'سه شنبه'
 
 class Database:
     def __init__(self):
-        app_config = get_app_config()
-        db_settings = app_config['database']
+        db_settings = get_db_settings()
 
         self.conn_params = {
             'dbname': db_settings["DB_NAME"],

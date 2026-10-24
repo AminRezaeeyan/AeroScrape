@@ -8,14 +8,9 @@ from contextlib import asynccontextmanager
 import joblib
 import os
 import logging
-import sys
 import shap
 
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
-from utils.config import get_app_config
+from aeroscrape.config import get_app_config, resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +53,7 @@ def load_model_and_preprocessor():
 
         # 2. Attempt to load preprocessor locally
         preprocessor_local_path = os.path.join(
-            project_root, 
-            pipeline_settings['model_output_dir'], 
+            resolve_path(pipeline_settings['model_output_dir']),
             pipeline_settings['preprocessor_filename']
         )
         if os.path.exists(preprocessor_local_path):

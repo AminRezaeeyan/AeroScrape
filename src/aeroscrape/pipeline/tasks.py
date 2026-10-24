@@ -1,28 +1,21 @@
 import os
-import sys
-
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-    
 import logging
 import pickle
 import json
 import mlflow
 
-from utils.config import get_app_config
+from aeroscrape.config import get_app_config, project_root as _project_root
 
-from scripts.data_validator import validate_raw_data
-from scripts.data_cleaner import clean_and_engineer_features
-from .association_miner import find_association_rules
-from scripts.data_processor import load_data, preprocess_data
-from scripts.hyperparameter_tuner import (
+from aeroscrape.data.validate import validate_raw_data
+from aeroscrape.data.clean import clean_and_engineer_features
+from aeroscrape.analysis.association import find_association_rules
+from aeroscrape.features.preprocess import load_data, preprocess_data
+from aeroscrape.models.tune import (
     tune_regression_hyperparameters,
     tune_classification_hyperparameters,
     save_best_params
 )
-from scripts.model_trainer import (
+from aeroscrape.models.train import (
     train_regression_model, evaluate_regression_model,
     train_classification_model, evaluate_classification_model,
     save_model, save_metrics
@@ -33,7 +26,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 def get_project_root():
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return str(_project_root())
 
 
 def task_validate_raw_data(**kwargs):

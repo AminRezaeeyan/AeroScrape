@@ -1,33 +1,19 @@
-import os
-import sys
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.models.param import Param
 from datetime import datetime, timedelta
 
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from airflow import DAG
+from airflow.models.param import Param
+from airflow.operators.python import PythonOperator
 
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
-try:
-    from scripts.pipeline_tasks import (
-        task_validate_raw_data,
-        task_clean_and_engineer_data,
-        task_preprocess_for_modeling,
-        task_tune_hyperparameters,
-        task_train_evaluate_regression,
-        task_train_evaluate_classification,
-        task_run_association_mining,
-        task_cleanup_processed_data
-    )
-    import logging
-    dag_logger = logging.getLogger(__name__)
-    dag_logger.info("Successfully imported pipeline tasks for Airflow DAG.")
-except ImportError as e:
-    dag_logger.error(f"Error importing pipeline tasks for Airflow DAG: {e}")
-    dag_logger.error(f"Please ensure project root ({project_root}) is correctly in sys.path: {sys.path}")
-    raise
+from aeroscrape.pipeline.tasks import (
+    task_clean_and_engineer_data,
+    task_cleanup_processed_data,
+    task_preprocess_for_modeling,
+    task_run_association_mining,
+    task_train_evaluate_classification,
+    task_train_evaluate_regression,
+    task_tune_hyperparameters,
+    task_validate_raw_data,
+)
 
 # Define default arguments for the DAG
 default_args = {
