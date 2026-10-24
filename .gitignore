@@ -1,44 +1,34 @@
-# Python Generated Files
-
+# Python build and tool caches
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.egg-info/
 build/
 dist/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.coverage
 htmlcov/
 
-# Virtual Environments
+# Virtual environments
 /venv/
+/.venv/
 /flight_env/
+
+# Secrets
 .env
 
-#  Dynamic ML & Data Artifacts (Crucial)
-# Ignore raw, cleaned, mined, and processed datasets
-/data/**/*.csv
-/data/processed/
-
-# Ignore local compiled model binaries and local metrics evaluations
-/models/**/*.joblib
-/models/**/*.json
-/models/preprocessor.joblib
-
-# Ignore the entire MLflow run database, tags, and tracking artifact logs
+# Data and model artifacts (download data with `make data`)
+/data/
+/models/
 /mlruns/
 
-# Logs and Process State Files
-# Ignore local runtime application logs
+# Runtime logs and process state
 /logs/
 *.log
-
-# Ignore Airflow runtime PID state files
 *.pid
 
-# IDE, OS, and Jupyter Notebook garbage
+# IDE, OS and notebook files
 .idea/
 .vscode/
 .DS_Store
