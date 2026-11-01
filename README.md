@@ -16,7 +16,7 @@ _Screenshot of the Airflow DAG orchestrating the ML pipeline._
 -   [Usage Workflow](#usage-workflow)
 -   [Data Analysis with Apache Superset](#data-analysis-with-apache-superset)
 -   [MLflow Integration](#mlflow-integration)
--   [CLI Tool (`src/cli.py`)](#cli-tool-srccli.py)
+-   [CLI Tool (`aeroscrape`)](#cli-tool-aeroscrape)
 -   [FastAPI Endpoints](#fastapi-endpoints)
 -   [Contributors](#contributors)
 -   [Acknowledgements](#acknowledgements)
@@ -43,14 +43,14 @@ _Screenshot of the Airflow DAG orchestrating the ML pipeline._
 
 The AeroScrape project is built with a modular architecture, separating concerns into distinct services and components:
 
-1.  **Data Ingestion (Scraper):** A Python script (`src/scraper.py`) that fetches flight data from `fids.airport.ir`. The `src/cli.py` script orchestrates data scraping, CSV import, and database export.
+1.  **Data Ingestion (Scraper):** A Python script (`aeroscrape.scraping.scraper`) that fetches flight data from `fids.airport.ir`. The `aeroscrape` command (`aeroscrape.cli`) orchestrates data scraping, CSV import, and database export.
 2.  **Database:** A PostgreSQL database (`db` service in Docker setup) for storing raw and processed flight information.
-3.  **ML Pipeline (Scripts):** A collection of Python scripts (`scripts/`) that perform the core ML workflow steps, from data validation to model training.
+3.  **ML Pipeline:** The `aeroscrape.data`, `aeroscrape.features`, `aeroscrape.models` and `aeroscrape.pipeline` packages that perform the core ML workflow steps, from data validation to model training.
 4.  **Orchestration (Apache Airflow):** Airflow DAGs (`dags/`) define and schedule the execution of the ML pipeline scripts as a Directed Acyclic Graph.
 5.  **MLflow Tracking Server:** An MLflow instance (`mlflow_server` in Docker setup) that serves as a centralized repository for logging ML experiments, tracking metrics, and managing model versions in the Model Registry.
-6.  **Inference API (FastAPI):** A FastAPI application (`src/api_service.py`) that loads the native ML model from MLflow Model Registry and provides a RESTful endpoint returning predictions along with real-time SHAP values.
-7.  **Inference Dashboard (Streamlit):** A user-friendly web interface (`src/streamlit_app.py`) allowing users to input flight details and examine predicted delays alongside contribution charts.
-8.  **Utilities (`utils/`):** A dedicated module for shared utility functions, including a robust configuration loader (`utils/config.py`) that handles both environment variables (`.env`) and structured YAML configuration (`config.yaml`).
+6.  **Inference API (FastAPI):** A FastAPI application (`aeroscrape.serving.api`) that loads the native ML model from MLflow Model Registry and provides a RESTful endpoint returning predictions along with real-time SHAP values.
+7.  **Inference Dashboard (Streamlit):** A user-friendly web interface (`aeroscrape.frontend.streamlit_app`) allowing users to input flight details and examine predicted delays alongside contribution charts.
+8.  **Configuration (`aeroscrape.config`):** A configuration loader that handles both environment variables (`.env`) and structured YAML configuration (`config.yaml`).
 
 ---
 
@@ -70,24 +70,22 @@ This is the easiest way to launch the entire MLOps environment. All components (
    ```
 
 2. **Configure Environment Variables:**
-   Copy the template env file and specify your database credentials:
    ```bash
    cp template.env .env
    ```
-   Modify `.env` to configure your database variables if needed. The defaults are already configured to connect internal services on the bridge network.
+   Edit `.env` and set the database password and the Airflow admin login (`AIRFLOW_ADMIN_USER`, `AIRFLOW_ADMIN_PASSWORD`). The Airflow containers refuse to start without them. If a value contains `$`, write it as `$$`, because Docker Compose expands variables in this file.
 
-3. **Launch the Container Stack:**
+3. **Download the Dataset and Launch the Stack:**
    ```bash
-   docker compose up -d
+   make data   # downloads data/raw/data.csv and verifies its checksum
+   make up
    ```
-   This will build the required image, initialize the PostgreSQL schema, set up database tables, and start all services.
+   This builds the image, creates the flight and Airflow databases, and starts all services. Postgres only runs its init scripts on an empty volume. If you have a volume from an older version, run `docker compose exec db createdb -U "$DB_USER" airflow` once with your `.env` loaded, or recreate the volume with `docker compose down -v`, which deletes the stored flight data.
 
 4. **Trigger the ML Pipeline:**
    * Open the Airflow Webserver UI in your browser at: **`http://localhost:8080`**
-   * Log in using the default administrator credentials:
-     * **Username:** `admin`
-     * **Password:** `admin`
-   * Locate the `flight_delay_prediction_pipeline` DAG, unpause it, and trigger a run.
+   * Log in with the `AIRFLOW_ADMIN_USER` and `AIRFLOW_ADMIN_PASSWORD` values from `.env`.
+   * Run `make train`, or locate the `flight_delay_prediction_pipeline` DAG, unpause it, and trigger a run.
    * Wait for all steps in the DAG (data validation, preprocessing, tuning, training, registry) to complete successfully and turn green.
 
 5. **Load the Registered Model into the API:**
@@ -111,13 +109,8 @@ If you prefer to configure and run the services natively on your local machine i
 ### Prerequisites
 
 * **Git:** For cloning the repository.
-* **Python 3.11:** It's crucial to use Python 3.11 as Airflow 2.x versions have specific Python compatibility.
-* **`python3.11-venv`:** For creating isolated Python environments.
-    ```bash
-    sudo apt update
-    sudo apt install python3.11 python3.11-venv
-    ```
-* **PostgreSQL:** Your application's scraper and database module (`src/database.py`) are designed to connect to a PostgreSQL database. You'll need a local PostgreSQL server running.
+* **Python 3.12** and **[uv](https://docs.astral.sh/uv/)**: `uv` installs the locked dependencies.
+* **PostgreSQL:** Your application's scraper and database module (`aeroscrape.storage.database`) are designed to connect to a PostgreSQL database. You'll need a local PostgreSQL server running.
     ```bash
     sudo apt install postgresql postgresql-contrib
     sudo systemctl start postgresql
@@ -131,12 +124,15 @@ git clone https://github.com/aminrezaeeyan/AeroScrape.git
 cd AeroScrape
 ```
 
-### Virtual Environment Setup
+### Environment Setup
 
 ```bash
-python3.11 -m venv flight_env
-source flight_env/bin/activate
+make setup               # installs uv.lock into .venv and the pre-commit hooks
+source .venv/bin/activate
+make data                # downloads the raw dataset
 ```
+
+`make lint` and `make test` run the checks. All targets are listed in the [Makefile](Makefile).
 
 ### Configuration
 
@@ -144,7 +140,7 @@ source flight_env/bin/activate
     ```bash
     cp template.env .env
     ```
-    Edit `.env` and replace `YOUR_ACTUAL_DB_PASSWORD_HERE` with a strong password for your local PostgreSQL database.
+    Edit `.env` and set a strong password for your local PostgreSQL database. Also run `export MLFLOW_TRACKING_URI=http://127.0.0.1:5000`, because `config.yaml` points at the Docker hostname.
 
 2.  **`config.yaml`:**
     Ensure this file exists in your project root with your pipeline parameters.
@@ -167,18 +163,9 @@ source flight_env/bin/activate
     psql -U flight-database-user -d flight-data -f init/init_db.sql
     ```
 
-### Install Python Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
 ### Running MLflow Tracking Server
 
-1.  **Open a new terminal window, navigate to project root, and activate environment:**
-    ```bash
-    source flight_env/bin/activate
-    ```
+1.  **Open a new terminal window, navigate to project root, and run `source .venv/bin/activate`.**
 2.  **Start MLflow Server:**
     ```bash
     mkdir -p mlruns 
@@ -194,12 +181,7 @@ pip install -r requirements.txt
     mkdir -p "$AIRFLOW_HOME"
     rm -rf "$AIRFLOW_HOME/dags"
     ln -s "$(pwd)/dags" "$AIRFLOW_HOME/dags"
-    ln -s "$(pwd)/scripts" "$AIRFLOW_HOME/scripts"
-    ln -s "$(pwd)/utils" "$AIRFLOW_HOME/utils"
-    ln -s "$(pwd)/config.yaml" "$AIRFLOW_HOME/config.yaml"
-    ln -s "$(pwd)/data" "$AIRFLOW_HOME/data"
-    ln -s "$(pwd)/models" "$AIRFLOW_HOME/models"
-    ln -s "$(pwd)/mlruns" "$AIRFLOW_HOME/mlruns"
+    export AEROSCRAPE_HOME="$(pwd)"
     ```
 2.  **Initialize Metadata Database:**
     ```bash
@@ -230,14 +212,14 @@ pip install -r requirements.txt
 ### Running FastAPI Inference Service
 
 ```bash
-uvicorn src.api_service:app --host 0.0.0.0 --port 8000 --reload
+uvicorn aeroscrape.serving.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 *Access docs at: `http://127.0.0.1:8000/docs`*
 
 ### Running Streamlit Frontend Dashboard
 
 ```bash
-streamlit run src/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+streamlit run src/aeroscrape/frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
 ```
 *Access dashboard at: `http://localhost:8501`*
 
@@ -269,7 +251,7 @@ _SHAP breakdown of factors increasing or reducing delays alongside an interactiv
 1.  **Data Ingestion:**
     * Run the scraper to collect fresh flight data:
         ```bash
-        python3 src/cli.py
+        aeroscrape
         ```
 2.  **ML Pipeline Execution:**
     * Trigger the Airflow DAG (`http://localhost:8080`).
@@ -301,27 +283,27 @@ MLflow is deeply integrated into the pipeline to ensure robust MLOps practices:
 
 ---
 
-## CLI Tool (`src/cli.py`)
+## CLI Tool (`aeroscrape`)
 
-The `src/cli.py` file provides a command-line interface for direct interaction with the project's data scraping and database operations.
+The `aeroscrape` command provides a command-line interface for direct interaction with the project's data scraping and database operations.
 
 ```bash
-python3 src/cli.py --help
+aeroscrape --help
 ```
 
 **Examples:**
 
 * **Scrape and Import Flight Data (Default):**
     ```bash
-    python3 src/cli.py --date 2026-06-03
+    aeroscrape --date 2026-06-03
     ```
 * **Import Flight Data from CSV:**
     ```bash
-    python3 src/cli.py --csv data/raw/flights_to_import.csv --date 2026-06-03
+    aeroscrape --csv data/raw/flights_to_import.csv --date 2026-06-03
     ```
 * **Export Flight Data to CSV:**
     ```bash
-    python3 src/cli.py --export-csv-path data/exported_flights.csv
+    aeroscrape --export-csv-path data/exported_flights.csv
     ```
 
 ---
