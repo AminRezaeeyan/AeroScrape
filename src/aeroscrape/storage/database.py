@@ -151,9 +151,7 @@ class Database:
         logging.debug(f"No full date or leading weekday in '{original_time_str}'. Falling back to _parse_time.")
         return self._parse_time(original_time_str, base_date)
 
-    def _parse_time(
-        self, time_str: str, base_date: datetime | None = None
-    ) -> tuple[datetime | None, str | None]:
+    def _parse_time(self, time_str: str, base_date: datetime | None = None) -> tuple[datetime | None, str | None]:
         """Convert time string (extracting HH:MM with regex) to datetime, using base_date for the date part."""
         if not time_str or not isinstance(time_str, str):
             return None, None

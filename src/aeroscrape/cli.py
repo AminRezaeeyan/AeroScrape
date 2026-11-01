@@ -23,7 +23,7 @@ def configure_logging() -> None:
 
 def run_data_operations():
     try:
-        app_config = get_app_config()
+        get_app_config()
         logger.info("Application configuration successfully accessed.")
     except Exception as e:
         logger.critical(f"Fatal error during application startup due to configuration issues: {e}")

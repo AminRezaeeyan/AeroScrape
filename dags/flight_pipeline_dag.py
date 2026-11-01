@@ -47,42 +47,36 @@ with DAG(
     validate_op = PythonOperator(
         task_id="validate_raw_data_task",
         python_callable=task_validate_raw_data,
-        provide_context=True,  # Essential for ti (TaskInstance) access
     )
 
     # Task 2: Clean raw data and engineer features
     clean_data_op = PythonOperator(
         task_id="clean_and_engineer_data_task",
         python_callable=task_clean_and_engineer_data,
-        provide_context=True,
     )
 
     # Task 3: Preprocess the cleaned data for modeling (split, scale, encode)
     preprocess_op = PythonOperator(
         task_id="preprocess_for_modeling_task",
         python_callable=task_preprocess_for_modeling,
-        provide_context=True,
     )
 
     # Task 4: Tune hyperparameters for the models
     tune_op = PythonOperator(
         task_id="tune_hyperparameters_task",
         python_callable=task_tune_hyperparameters,
-        provide_context=True,
     )
 
     # Task 5a: Train and evaluate the regression model
     train_eval_regression_op = PythonOperator(
         task_id="train_evaluate_regression_task",
         python_callable=task_train_evaluate_regression,
-        provide_context=True,
     )
 
     # Task 5b: Train and evaluate the classification model
     train_eval_classification_op = PythonOperator(
         task_id="train_evaluate_classification_task",
         python_callable=task_train_evaluate_classification,
-        provide_context=True,
     )
 
     # Task 5c: Run association Mining
@@ -96,7 +90,6 @@ with DAG(
         task_id="cleanup_processed_data_task",
         python_callable=task_cleanup_processed_data,
         trigger_rule="all_done",
-        provide_context=True,
     )
 
     # Define the task dependencies

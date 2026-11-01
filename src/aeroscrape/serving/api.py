@@ -136,7 +136,7 @@ def create_features(data: FlightInput) -> pd.DataFrame:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid scheduled_datetime format. Use YYYY-MM-DD HH:MM:SS.",
-        )
+        ) from e
 
     dt_series = df["scheduled_datetime"]
 
@@ -210,7 +210,7 @@ async def predict(flight_data: FlightInput):
     """
     Predicts flight delay and calculates individual feature contributions using SHAP.
     """
-    if model is None or preprocessor is None:
+    if model is None or preprocessor is None or app_config is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Model, preprocessor, or explainability systems are currently unavailable.",
@@ -238,7 +238,7 @@ async def predict(flight_data: FlightInput):
 
                 # Pair, clean names, and sort by absolute contribution
                 raw_contributions = []
-                for name, value in zip(feature_names, single_shap_values):
+                for name, value in zip(feature_names, single_shap_values, strict=True):
                     if abs(value) > 0.05:  # Filter out features with negligible contributions
                         raw_contributions.append(
                             FeatureContribution(feature=clean_feature_name(name), contribution=round(float(value), 3))
@@ -252,9 +252,11 @@ async def predict(flight_data: FlightInput):
             "is_delayed": is_delayed,
             "explainability": explainability_data,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error during prediction: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Prediction failed: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Prediction failed: {e}") from e
 
 
 @app.post("/reload", status_code=status.HTTP_200_OK)
