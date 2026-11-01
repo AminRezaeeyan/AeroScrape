@@ -41,6 +41,7 @@ ui = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "mypy" },
     { name = "pandas-stubs" },
     { name = "pre-commit" },
@@ -80,6 +81,7 @@ provides-extras = ["api", "ui", "airflow"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "pandas-stubs", specifier = ">=2.1" },
     { name = "pre-commit", specifier = ">=4.0" },
