@@ -73,14 +73,14 @@ This is the easiest way to launch the entire MLOps environment. All components (
    ```bash
    cp template.env .env
    ```
-   Edit `.env` and set the database password and the Airflow admin login (`AIRFLOW_ADMIN_USER`, `AIRFLOW_ADMIN_PASSWORD`). The Airflow containers refuse to start without them. If a value contains `$`, write it as `$$`, because Docker Compose expands variables in this file.
+   Edit `.env` and set every password. `DB_ADMIN_*` is the Postgres superuser that only sets up the database; the scraper uses the limited `DB_USER` role and Airflow uses `AIRFLOW_DB_USER`. If a value contains `$`, write it as `$$`, because Docker Compose expands variables in this file.
 
 3. **Download the Dataset and Launch the Stack:**
    ```bash
    make data   # downloads data/raw/data.csv and verifies its checksum
    make up
    ```
-   This builds the image, creates the flight and Airflow databases, and starts all services. Postgres only runs its init scripts on an empty volume. If you have a volume from an older version, run `docker compose exec db createdb -U "$DB_USER" airflow` once with your `.env` loaded, or recreate the volume with `docker compose down -v`, which deletes the stored flight data.
+   This builds the image, creates the flight and Airflow databases, and starts all services. Postgres only runs its init scripts on an empty volume, so changing these roles later needs `docker compose down -v`, which deletes the stored flight data.
 
 4. **Trigger the ML Pipeline:**
    * Open the Airflow Webserver UI in your browser at: **`http://localhost:8080`**
@@ -160,7 +160,7 @@ make data                # downloads the raw dataset
     ```
 3.  **Initialize Database Schema:**
     ```bash
-    psql -U flight-database-user -d flight-data -f init/init_db.sql
+    psql -U flight-database-user -d flight-data -f init/10_init_db.sql
     ```
 
 ### Running MLflow Tracking Server
