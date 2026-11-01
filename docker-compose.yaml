@@ -65,8 +65,7 @@ services:
       - ./data:/opt/airflow/data
       - ./models:/opt/airflow/models
       - ./config.yaml:/opt/airflow/config.yaml
-      - ./scripts:/opt/airflow/scripts
-      - ./utils:/opt/airflow/utils
+      - ./src:/opt/airflow/src
     ports:
       - "8080:8080"
     networks:
@@ -113,8 +112,7 @@ services:
       - ./data:/opt/airflow/data
       - ./models:/opt/airflow/models
       - ./config.yaml:/opt/airflow/config.yaml
-      - ./scripts:/opt/airflow/scripts
-      - ./utils:/opt/airflow/utils
+      - ./src:/opt/airflow/src
     networks:
       - flight_network
     depends_on:
@@ -134,13 +132,12 @@ services:
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
     working_dir: /opt/airflow
-    command: uvicorn src.api_service:app --host 0.0.0.0 --port 8000
+    command: uvicorn aeroscrape.serving.api:app --host 0.0.0.0 --port 8000
     volumes:
       - ./src:/opt/airflow/src
       - ./models:/opt/airflow/models
       - ./mlruns:/mlruns           
       - ./config.yaml:/opt/airflow/config.yaml
-      - ./utils:/opt/airflow/utils
     ports:
       - "8000:8000"
     networks:
@@ -162,13 +159,12 @@ services:
       - DB_NAME=${DB_NAME}
       - MLFLOW_TRACKING_URI=http://mlflow:5000
     working_dir: /opt/airflow
-    command: python src/cli.py
+    command: aeroscrape
     volumes:
       - ./src:/opt/airflow/src
       - ./data:/opt/airflow/data
       - ./logs:/opt/airflow/logs
       - ./mlruns:/mlruns             
-      - ./utils:/opt/airflow/utils
       - ./config.yaml:/opt/airflow/config.yaml
     networks:
       - flight_network
@@ -183,12 +179,11 @@ services:
       environment:
         - BACKEND_URL=http://api:8000/predict
       working_dir: /opt/airflow
-      command: streamlit run src/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+      command: streamlit run src/aeroscrape/frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
       volumes:
         - ./src:/opt/airflow/src
         - ./config.yaml:/opt/airflow/config.yaml
-        - ./utils:/opt/airflow/utils
-      ports:
+        ports:
         - "8501:8501"
       networks:
         - flight_network

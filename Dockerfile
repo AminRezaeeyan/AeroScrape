@@ -1,27 +1,24 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    AIRFLOW_HOME=/opt/airflow
-RUN echo "deb http://mirror-linux.runflare.com/debian bookworm main" > /etc/apt/sources.list.d/runflare.list && \
-    echo "deb http://mirror-linux.runflare.com/debian-security bookworm-security main" >> /etc/apt/sources.list.d/runflare.list && \
-    rm -f /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        libpq-dev \
-        wget \
-        curl \
-        git && \
+    AIRFLOW_HOME=/opt/airflow \
+    AEROSCRAPE_HOME=/opt/airflow \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH=/opt/venv/bin:$PATH
+
+# libgomp1 is required by LightGBM, curl by the compose health checks
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl git libgomp1 && \
     rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir --disable-pip-version-check uv==0.12.3
 
 WORKDIR /opt/airflow
 
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir --compile --disable-pip-version-check --default-timeout=120 -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-
-# Create project folders
-RUN mkdir -p /opt/airflow/dags /opt/airflow/logs /opt/airflow/data /opt/airflow/models /opt/airflow/scripts /opt/airflow/utils
+# Install locked dependencies first so code changes don't invalidate this layer
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --all-extras --no-dev --no-install-project
 
 COPY . .
+RUN uv sync --frozen --all-extras --no-dev

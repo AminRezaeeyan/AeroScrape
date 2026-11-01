@@ -3,8 +3,8 @@
 .env
 
 # Python caches and virtual environments
-__pycache__/
-*.py[cod]
+**/__pycache__
+**/*.py[cod]
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
@@ -13,6 +13,7 @@ venv/
 flight_env/
 
 # Runtime data, mounted as volumes instead of baked into the image
+# (leading names only match at the root, so src/aeroscrape/data stays included)
 data/
 models/
 mlruns/

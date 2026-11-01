@@ -1,0 +1,65 @@
+[project]
+name = "aeroscrape"
+version = "0.2.0"
+description = "Flight data scraping and delay prediction for Iranian airports"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Amin Rezaeeyan", email = "rezaeeyanamin@gmail.com" },
+    { name = "Mahan Zavari", email = "mahanzavari@gmail.com" },
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "beautifulsoup4>=4.12.2,<4.13",
+    "jdatetime>=5.2.0,<5.3",
+    "joblib>=1.5.1,<1.6",
+    "lightgbm>=4.6.0,<4.7",
+    "mlflow>=3.1.1,<3.2",
+    "mlxtend>=0.23.4,<0.24",
+    "numpy>=1.26.4,<2",
+    "optuna>=4.3.0,<4.4",
+    "pandas>=2.1.3,<2.2",
+    "pandera>=0.24.0,<0.25",
+    "psycopg2-binary>=2.9.9,<2.10",
+    "python-dotenv>=1.1.0,<1.2",
+    "pyyaml>=6.0.2,<6.1",
+    "requests>=2.32.3,<2.33",
+    "scikit-learn>=1.6.1,<1.7",
+    "scipy>=1.15.0,<2",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.115.14,<0.116",
+    "pydantic>=2.11.7,<2.12",
+    "shap>=0.42.0,<0.49",
+    "uvicorn>=0.35.0,<0.36",
+]
+ui = [
+    "streamlit>=1.30.0,<2",
+]
+airflow = [
+    "apache-airflow>=2.9.0,<2.10",
+]
+
+[project.scripts]
+aeroscrape = "aeroscrape.cli:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pandas-stubs>=2.1",
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "types-pyyaml>=6.0",
+    "types-requests>=2.32",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aeroscrape"]
