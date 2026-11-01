@@ -1,3 +1,4 @@
+import logging
 from urllib.parse import urljoin
 
 import pandas as pd
@@ -5,6 +6,8 @@ import requests
 from bs4 import BeautifulSoup
 
 from aeroscrape.config import get_app_config
+
+logger = logging.getLogger(__name__)
 
 
 def scrape_table(soup, table_id, airport_name):
@@ -59,7 +62,7 @@ def scrape_airport_data(airport_name, airport_url):
             all_flights.extend(flights)
         return all_flights
     except requests.RequestException as e:
-        print(f"Error fetching data for {airport_name}: {e}")
+        logger.error("Error fetching data for %s: %s", airport_name, e)
         return []
 
 
@@ -69,7 +72,7 @@ def get_all_flights_data() -> pd.DataFrame:
 
     all_data = []
     for airport in airports_config:
-        print(f"Scraping data for {airport['name']}...")
+        logger.info("Scraping data for %s", airport["name"])
         airport_data = scrape_airport_data(airport["name"], airport["url"])
         all_data.extend(airport_data)
 
@@ -84,8 +87,3 @@ def get_all_flights_data() -> pd.DataFrame:
         )
 
     return df
-
-
-if __name__ == "__main__":
-    df = get_all_flights_data()
-    print(df.head())

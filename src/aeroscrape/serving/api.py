@@ -42,13 +42,13 @@ def load_model_and_preprocessor():
         try:
             # Loaded as a native sklearn/LGBM model to support SHAP TreeExplainer
             model = mlflow.sklearn.load_model(model_uri)
-            logger.info(f"✅ Native ML model '{registered_model_name}' loaded successfully.")
+            logger.info(f"Native ML model '{registered_model_name}' loaded successfully.")
 
             # Initialize global SHAP TreeExplainer
             explainer = shap.TreeExplainer(model)
-            logger.info("✅ SHAP TreeExplainer initialized successfully.")
+            logger.info("SHAP TreeExplainer initialized successfully.")
         except Exception as me:
-            logger.warning(f"⚠️ Could not load ML model from registry: {me}. Prediction will be unavailable.")
+            logger.warning(f"Could not load ML model from registry: {me}. Prediction will be unavailable.")
             model = None
             explainer = None
 
@@ -59,16 +59,16 @@ def load_model_and_preprocessor():
         if os.path.exists(preprocessor_local_path):
             try:
                 preprocessor = joblib.load(preprocessor_local_path)
-                logger.info(f"✅ Preprocessor loaded successfully from {preprocessor_local_path}.")
+                logger.info(f"Preprocessor loaded successfully from {preprocessor_local_path}.")
             except Exception as pe:
-                logger.warning(f"⚠️ Could not load preprocessor from local path: {pe}. Prediction will be unavailable.")
+                logger.warning(f"Could not load preprocessor from local path: {pe}. Prediction will be unavailable.")
                 preprocessor = None
         else:
-            logger.warning(f"⚠️ Preprocessor not found at {preprocessor_local_path}. Prediction will be unavailable.")
+            logger.warning(f"Preprocessor not found at {preprocessor_local_path}. Prediction will be unavailable.")
             preprocessor = None
 
     except Exception as e:
-        logger.error(f"❌ Error during component initialization: {e}", exc_info=True)
+        logger.error(f"Error during component initialization: {e}", exc_info=True)
         model = None
         preprocessor = None
         explainer = None

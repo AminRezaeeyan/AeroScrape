@@ -25,7 +25,6 @@ from aeroscrape.models.tune import (
     tune_regression_hyperparameters,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 

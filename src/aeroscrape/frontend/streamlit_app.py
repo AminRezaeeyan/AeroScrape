@@ -8,9 +8,9 @@ import streamlit as st
 # Configure Backend URL (Use container network hostname 'api' inside Docker)
 BACKEND_URL = os.getenv("BACKEND_URL", "http://api:8000/predict")
 
-st.set_page_config(page_title="AeroScrape - Flight Delay Predictor", page_icon="✈️", layout="centered")
+st.set_page_config(page_title="AeroScrape - Flight Delay Predictor", layout="centered")
 
-st.title("✈️ AeroScrape: Flight Delay Predictor")
+st.title("AeroScrape: Flight Delay Predictor")
 st.write("Enter the flight details below to evaluate the estimated delay in minutes.")
 
 with st.form("prediction_form"):
@@ -58,13 +58,13 @@ if submit_btn:
 
             # 1. Main prediction display
             if is_delayed:
-                st.error(f"⚠️ Predicted Delay: {delay:.2f} minutes")
+                st.error(f"Predicted Delay: {delay:.2f} minutes")
             else:
-                st.success(f"✅ On Time! Predicted Delay: {delay:.2f} minutes")
+                st.success(f"On Time! Predicted Delay: {delay:.2f} minutes")
 
             # 2. SHAP Explainability Display
             if explainability:
-                st.subheader("📊 Why did the model make this prediction? (SHAP)")
+                st.subheader("Why did the model make this prediction? (SHAP)")
                 st.write("Below are the top factors that impacted this specific estimation:")
 
                 pos_factors = [f for f in explainability if f["contribution"] > 0]
@@ -73,7 +73,7 @@ if submit_btn:
                 exp_col1, exp_col2 = st.columns(2)
 
                 with exp_col1:
-                    st.markdown("**🔴 Factors Increasing Delay**")
+                    st.markdown("**Factors Increasing Delay**")
                     if pos_factors:
                         for item in pos_factors[:5]:  # Show top 5
                             st.write(f"- **{item['feature']}**: +{item['contribution']:.1f} mins")
@@ -81,7 +81,7 @@ if submit_btn:
                         st.write("_No major delaying factors detected_")
 
                 with exp_col2:
-                    st.markdown("**🟢 Factors Reducing Delay**")
+                    st.markdown("**Factors Reducing Delay**")
                     if neg_factors:
                         for item in neg_factors[:5]:  # Show top 5
                             st.write(f"- **{item['feature']}**: {item['contribution']:.1f} mins")
