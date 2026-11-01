@@ -16,8 +16,10 @@ services:
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_DB=${DB_NAME}
+      - AIRFLOW_DB_NAME=${AIRFLOW_DB_NAME:-airflow}
     volumes:
-      - ./init/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./init/00_create_airflow_db.sh:/docker-entrypoint-initdb.d/00_create_airflow_db.sh
+      - ./init/init_db.sql:/docker-entrypoint-initdb.d/10_init_db.sql
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
@@ -53,7 +55,7 @@ services:
     environment:
       - AIRFLOW_HOME=/opt/airflow
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${DB_USER}:${DB_PASSWORD}@db:${DB_PORT}/${DB_NAME}
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${DB_USER}:${DB_PASSWORD}@db:${DB_PORT}/${AIRFLOW_DB_NAME:-airflow}
       - AIRFLOW__WEBSERVER__RBAC=True
       - AIRFLOW__WEBSERVER__WEB_SERVER_PORT=8080
       - MLFLOW_TRACKING_URI=http://mlflow:5000
@@ -75,18 +77,22 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_started
-    entrypoint: |
-          sh -c "
-            airflow db init &&
-            (airflow users create \
-              --username admin \
-              --firstname admin \
-              --lastname admin \
-              --role Admin \
-              --email admin@example.com \
-              --password admin || true) &&
-            airflow webserver
-          "
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        : "$${AIRFLOW_ADMIN_USER:?Set AIRFLOW_ADMIN_USER in .env}"
+        : "$${AIRFLOW_ADMIN_PASSWORD:?Set AIRFLOW_ADMIN_PASSWORD in .env}"
+        airflow db migrate
+        airflow users create \
+          --username "$$AIRFLOW_ADMIN_USER" \
+          --password "$$AIRFLOW_ADMIN_PASSWORD" \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email "$${AIRFLOW_ADMIN_EMAIL:-admin@example.com}"
+        exec airflow webserver
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 30s
@@ -102,7 +108,7 @@ services:
     environment:
       - AIRFLOW_HOME=/opt/airflow
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${DB_USER}:${DB_PASSWORD}@db:${DB_PORT}/${DB_NAME}
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${DB_USER}:${DB_PASSWORD}@db:${DB_PORT}/${AIRFLOW_DB_NAME:-airflow}
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - AIRFLOW__CORE__LOGGING_LEVEL=INFO
     volumes:
@@ -173,20 +179,21 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_started
+
   frontend:
-      build: .
-      container_name: flight_frontend
-      environment:
-        - BACKEND_URL=http://api:8000/predict
-      working_dir: /opt/airflow
-      command: streamlit run src/aeroscrape/frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
-      volumes:
-        - ./src:/opt/airflow/src
-        - ./config.yaml:/opt/airflow/config.yaml
-        ports:
-        - "8501:8501"
-      networks:
-        - flight_network
-      depends_on:
-        api:
-          condition: service_started
+    build: .
+    container_name: flight_frontend
+    environment:
+      - BACKEND_URL=http://api:8000/predict
+    working_dir: /opt/airflow
+    command: streamlit run src/aeroscrape/frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+    volumes:
+      - ./src:/opt/airflow/src
+      - ./config.yaml:/opt/airflow/config.yaml
+    ports:
+      - "8501:8501"
+    networks:
+      - flight_network
+    depends_on:
+      api:
+        condition: service_started
