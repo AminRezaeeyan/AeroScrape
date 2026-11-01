@@ -2,7 +2,7 @@
 
 AeroScrape is a comprehensive MLOps (Machine Learning Operations) project designed to scrape real-time flight data, store it, train machine learning models to predict flight delays, and serve these predictions via a RESTful API. The entire pipeline is orchestrated using Apache Airflow, tracks experiment iterations via MLflow, and provides real-time explanations for predictions using SHAP (Explainable AI), served on a clean Streamlit interface.
 
-![Airflow Tasks Screenshot](https://github.com/aminrezaeeyan/AeroScrape/blob/main/screenshots/airflow-tasks.png?raw=true)
+![Airflow Tasks Screenshot](docs/screenshots/airflow-tasks.png)
 _Screenshot of the Airflow DAG orchestrating the ML pipeline._
 
 
@@ -37,7 +37,7 @@ _Screenshot of the Airflow DAG orchestrating the ML pipeline._
     * **Experiment Tracking:** Logs all model training parameters, metrics, and artifacts.
     * **Model Registry:** Centralized management and versioning of trained models, with automated alias assignment (e.g., to "production").
 * **Explainable AI (SHAP):** Integrates individual feature contributions for every single prediction, identifying factors that decrease or increase flight delays.
-* **Inference Dashboard (Streamlit):** An interactive frontend to query predictions and visualize SHAP force contributions on a clean web UI.
+* **Inference Dashboard (Streamlit):** An interactive demo to query predictions and visualize SHAP force contributions on a clean web UI.
 
 ## Architecture Overview
 
@@ -49,7 +49,7 @@ The AeroScrape project is built with a modular architecture, separating concerns
 4.  **Orchestration (Apache Airflow):** Airflow DAGs (`dags/`) define and schedule the execution of the ML pipeline scripts as a Directed Acyclic Graph.
 5.  **MLflow Tracking Server:** An MLflow instance (`mlflow_server` in Docker setup) that serves as a centralized repository for logging ML experiments, tracking metrics, and managing model versions in the Model Registry.
 6.  **Inference API (FastAPI):** A FastAPI application (`aeroscrape.serving.api`) that loads the native ML model from MLflow Model Registry and provides a RESTful endpoint returning predictions along with real-time SHAP values.
-7.  **Inference Dashboard (Streamlit):** A user-friendly web interface (`aeroscrape.frontend.streamlit_app`) allowing users to input flight details and examine predicted delays alongside contribution charts.
+7.  **Inference Dashboard (Streamlit):** A user-friendly web interface (`aeroscrape.demo.streamlit_app`) allowing users to input flight details and examine predicted delays alongside contribution charts.
 8.  **Configuration (`aeroscrape.config`):** A configuration loader that handles both environment variables (`.env`) and structured YAML configuration (`config.yaml`).
 
 ---
@@ -219,7 +219,7 @@ uvicorn aeroscrape.serving.api:app --host 0.0.0.0 --port 8000 --reload
 ### Running Streamlit Frontend Dashboard
 
 ```bash
-streamlit run src/aeroscrape/frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+streamlit run src/aeroscrape/demo/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
 ```
 *Access dashboard at: `http://localhost:8501`*
 
@@ -227,12 +227,12 @@ streamlit run src/aeroscrape/frontend/streamlit_app.py --server.port 8501 --serv
 
 ## Inference & Explainability Interface
 
-Our frontend dashboard provides a comprehensive evaluation of flight delay predictions. Beyond returning a numeric estimate, the backend computes individual feature importance using **SHAP**. This exposes exactly what factors are contributing to or preventing delays.
+The demo dashboard provides a comprehensive evaluation of flight delay predictions. Beyond returning a numeric estimate, the backend computes individual feature importance using **SHAP**. This exposes exactly what factors are contributing to or preventing delays.
 
 ### 🎥 Live Prediction Interface
 The interface allows users to select flight features and view estimated delays instantly.
 
-![Frontend Main Predictor Dashboard](screenshots/frontend-main.png?raw=true)
+![Demo Predictor Dashboard](docs/screenshots/demo-main.png)
 
 _Streamlit web form predicting a 35.22-minute delay._
 
@@ -240,7 +240,7 @@ _Streamlit web form predicting a 35.22-minute delay._
 ### 📊 Feature Explainability Breakdown
 Our pipeline maps the numerical and categorical components to illustrate positive and negative contributors behind the prediction.
 
-![SHAP Explainability Results and Charts](screenshots/shap-explainability.png?raw=true)
+![SHAP Explainability Results and Charts](docs/screenshots/shap-explainability.png)
 
 _SHAP breakdown of factors increasing or reducing delays alongside an interactive feature impact bar chart._
 
@@ -264,7 +264,7 @@ _SHAP breakdown of factors increasing or reducing delays alongside an interactiv
 
 ## Data Analysis with Apache Superset
 
-![Apache Superset Dashboard](https://github.com/aminrezaeeyan/AeroScrape/blob/main/screenshots/apache-superset.jpg?raw=true)
+![Apache Superset Dashboard](docs/screenshots/apache-superset.jpg)
 _A sample dashboard in Apache Superset for data analysis._
 
 Apache Superset is an open-source data visualization and data exploration platform. In this project, we have utilized Superset for analyzing the scraped and processed flight data. It provides intuitive dashboards that allow for deep insights into the dataset, helping to understand flight patterns, delays, and other key metrics.
@@ -273,7 +273,7 @@ Apache Superset is an open-source data visualization and data exploration platfo
 
 ## MLflow Integration
 
-![MLflow Metrics Dashboard](https://github.com/aminrezaeeyan/AeroScrape/blob/main/screenshots/mlflow-metrics.png?raw=true)
+![MLflow Metrics Dashboard](docs/screenshots/mlflow-metrics.png)
 _Screenshot of MLflow UI showing metrics for different model runs._
 
 MLflow is deeply integrated into the pipeline to ensure robust MLOps practices:

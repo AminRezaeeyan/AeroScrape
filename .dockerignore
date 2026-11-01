@@ -21,7 +21,6 @@ logs/
 
 # Not needed at runtime
 notebooks/
-screenshots/
 tests/
 docs/
 
