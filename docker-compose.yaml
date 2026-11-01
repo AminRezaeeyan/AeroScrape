@@ -22,7 +22,7 @@ services:
       - ./init/init_db.sql:/docker-entrypoint-initdb.d/10_init_db.sql
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "${DB_HOST_PORT:-5433}:5432"
     networks:
       - flight_network
     healthcheck:
