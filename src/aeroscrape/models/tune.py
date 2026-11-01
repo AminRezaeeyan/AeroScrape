@@ -1,12 +1,14 @@
-import optuna
-import lightgbm as lgb
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import mean_absolute_error, f1_score
-import logging
 import json
+import logging
 import os
 
+import lightgbm as lgb
+import optuna
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score, mean_absolute_error
+
 logger = logging.getLogger(__name__)
+
 
 def tune_regression_hyperparameters(X_train, y_train, X_val, y_val, n_trials):
     def objective(trial):
@@ -33,6 +35,7 @@ def tune_regression_hyperparameters(X_train, y_train, X_val, y_val, n_trials):
     logger.info(f"Best params: {study.best_params}")
     return study.best_params
 
+
 def tune_classification_hyperparameters(X_train, y_train, X_val, y_val, n_trials):
     def objective(trial):
         params = {
@@ -53,10 +56,11 @@ def tune_classification_hyperparameters(X_train, y_train, X_val, y_val, n_trials
     logger.info(f"Best params: {study.best_params}")
     return study.best_params
 
+
 def save_best_params(params, path):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(params, f, indent=4)
         logger.info(f"Best parameters saved to {path}")
     except Exception as e:

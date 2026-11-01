@@ -13,15 +13,13 @@ logger = logging.getLogger(__name__)
 def configure_logging() -> None:
     log_dir = resolve_path("logs")
     os.makedirs(log_dir, exist_ok=True)
-    log_filename = os.path.join(log_dir, f'flight_ops_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+    log_filename = os.path.join(log_dir, f"flight_ops_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_filename),
-            logging.StreamHandler()
-        ]
+        format="%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s",
+        handlers=[logging.FileHandler(log_filename), logging.StreamHandler()],
     )
+
 
 def run_data_operations():
     try:
@@ -29,14 +27,20 @@ def run_data_operations():
         logger.info("Application configuration successfully accessed.")
     except Exception as e:
         logger.critical(f"Fatal error during application startup due to configuration issues: {e}")
-        return # Cannot proceed
+        return  # Cannot proceed
 
-    parser = argparse.ArgumentParser(description='Flight data scraper, importer, and exporter.')
-    parser.add_argument('--date', type=str, help='Base date for flights (YYYY-MM-DD format) for CSV import or scraping. Defaults to current date if not provided.')
+    parser = argparse.ArgumentParser(description="Flight data scraper, importer, and exporter.")
+    parser.add_argument(
+        "--date",
+        type=str,
+        help="Base date for flights (YYYY-MM-DD format) for CSV import or scraping. Defaults to current date if not provided.",
+    )
 
     group = parser.add_mutually_exclusive_group()
-    group.add_argument('--csv', type=str, help='Path to CSV file for import. Uses --date or current date if times in CSV are relative.')
-    group.add_argument('--export-csv-path', type=str, help='Path to export the database content to a CSV file.')
+    group.add_argument(
+        "--csv", type=str, help="Path to CSV file for import. Uses --date or current date if times in CSV are relative."
+    )
+    group.add_argument("--export-csv-path", type=str, help="Path to export the database content to a CSV file.")
 
     args = parser.parse_args()
 
@@ -49,7 +53,7 @@ def run_data_operations():
         base_date = None
         if args.date:
             try:
-                base_date = datetime.strptime(args.date, '%Y-%m-%d')
+                base_date = datetime.strptime(args.date, "%Y-%m-%d")
                 logger.info(f"Using provided base date: {base_date.strftime('%Y-%m-%d')}")
             except ValueError:
                 logger.error("Invalid date format for --date. Please use YYYY-MM-DD. Aborting.")
@@ -77,7 +81,7 @@ def run_data_operations():
             inserted_count = db.insert_flights_from_csv(args.csv, base_date=base_date)
             logger.info(f"Successfully inserted/updated {inserted_count} flights from CSV file: {args.csv}")
 
-        else: # Default behavior: scrape
+        else:  # Default behavior: scrape
             logger.info("Starting flight data scraping...")
             df = get_all_flights_data()
             if df is None or df.empty:
@@ -89,6 +93,7 @@ def run_data_operations():
 
     except Exception as e:
         logger.error(f"An unexpected error occurred in CLI execution: {str(e)}", exc_info=True)
+
 
 def main() -> None:
     configure_logging()

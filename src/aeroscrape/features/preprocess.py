@@ -1,14 +1,16 @@
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-import joblib
-import os
 import logging
+import os
+
+import joblib
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
 from aeroscrape.config import get_app_config
 
 logger = logging.getLogger(__name__)
+
 
 # This function might not be needed if df is passed directly from a previous task
 def load_data(data_path):
@@ -24,34 +26,38 @@ def load_data(data_path):
         logger.error(f"Error loading data: {e}")
         raise
 
+
 def preprocess_data(df, project_root_path):
-    app_config = get_app_config() # Get app config
+    app_config = get_app_config()  # Get app config
 
     logger.info("Starting data preprocessing...")
 
     df_processed = df.copy()
 
     # Access pipeline config directly
-    pipeline_config = app_config['pipeline']
-    numerical_features = pipeline_config['numerical_features']
-    categorical_features = pipeline_config['categorical_features']
-    target_regression = pipeline_config['target_regression']
-    target_classification = pipeline_config['target_classification']
-    delay_threshold_minutes = pipeline_config['delay_threshold_minutes']
-    test_size = pipeline_config['test_size']
-    random_state = pipeline_config['random_state']
-    model_output_dir_config = pipeline_config['model_output_dir'] # Path for saving preprocessor
+    pipeline_config = app_config["pipeline"]
+    numerical_features = pipeline_config["numerical_features"]
+    categorical_features = pipeline_config["categorical_features"]
+    target_regression = pipeline_config["target_regression"]
+    target_classification = pipeline_config["target_classification"]
+    delay_threshold_minutes = pipeline_config["delay_threshold_minutes"]
+    test_size = pipeline_config["test_size"]
+    random_state = pipeline_config["random_state"]
+    model_output_dir_config = pipeline_config["model_output_dir"]  # Path for saving preprocessor
 
     df_processed[target_classification] = (df_processed[target_regression] > delay_threshold_minutes).astype(int)
     logger.info(f"Created classification target '{target_classification}'.")
 
     try:
-        df_processed['scheduled_minute'] = pd.to_datetime(df_processed['scheduled_time'].astype(str), format='%H:%M:%S', errors='raise').dt.minute
+        df_processed["scheduled_minute"] = pd.to_datetime(
+            df_processed["scheduled_time"].astype(str), format="%H:%M:%S", errors="raise"
+        ).dt.minute
         logger.info("Extracted 'scheduled_minute' from 'scheduled_time'.")
     except Exception as e:
-        logger.warning(f"Could not parse 'scheduled_time' to extract minutes: {e}. 'scheduled_minute' will be set to 0 or NaN.")
-        df_processed['scheduled_minute'] = 0
-
+        logger.warning(
+            f"Could not parse 'scheduled_time' to extract minutes: {e}. 'scheduled_minute' will be set to 0 or NaN."
+        )
+        df_processed["scheduled_minute"] = 0
 
     X = df_processed[numerical_features + categorical_features]
     y_reg = df_processed[target_regression]
@@ -73,23 +79,23 @@ def preprocess_data(df, project_root_path):
     logger.info(f"Data split into train and test sets. Train size: {X_train.shape[0]}, Test size: {X_test.shape[0]}")
 
     for col in numerical_features:
-        if X_train[col].dtype == 'object':
+        if X_train[col].dtype == "object":
             try:
-                X_train[col] = pd.to_numeric(X_train[col], errors='raise')
-                X_test[col] = pd.to_numeric(X_test[col], errors='raise')
+                X_train[col] = pd.to_numeric(X_train[col], errors="raise")
+                X_test[col] = pd.to_numeric(X_test[col], errors="raise")
             except ValueError as e:
                 logger.error(f"Could not convert numerical feature '{col}' to numeric: {e}. Check data quality.")
                 raise
 
     numerical_transformer = StandardScaler()
-    categorical_transformer = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+    categorical_transformer = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ('num', numerical_transformer, numerical_features),
-            ('cat', categorical_transformer, categorical_features)
+            ("num", numerical_transformer, numerical_features),
+            ("cat", categorical_transformer, categorical_features),
         ],
-        remainder='passthrough'
+        remainder="passthrough",
     )
 
     X_train_processed = preprocessor.fit_transform(X_train)

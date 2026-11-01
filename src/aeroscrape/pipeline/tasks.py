@@ -1,29 +1,33 @@
-import os
-import logging
-import pickle
 import json
+import logging
+import os
+import pickle
+
 import mlflow
 
-from aeroscrape.config import get_app_config, project_root as _project_root
-
-from aeroscrape.data.validate import validate_raw_data
-from aeroscrape.data.clean import clean_and_engineer_features
 from aeroscrape.analysis.association import find_association_rules
+from aeroscrape.config import get_app_config
+from aeroscrape.config import project_root as _project_root
+from aeroscrape.data.clean import clean_and_engineer_features
+from aeroscrape.data.validate import validate_raw_data
 from aeroscrape.features.preprocess import load_data, preprocess_data
-from aeroscrape.models.tune import (
-    tune_regression_hyperparameters,
-    tune_classification_hyperparameters,
-    save_best_params
-)
 from aeroscrape.models.train import (
-    train_regression_model, evaluate_regression_model,
-    train_classification_model, evaluate_classification_model,
-    save_model, save_metrics
+    evaluate_classification_model,
+    evaluate_regression_model,
+    save_metrics,
+    save_model,
+    train_classification_model,
+    train_regression_model,
+)
+from aeroscrape.models.tune import (
+    save_best_params,
+    tune_classification_hyperparameters,
+    tune_regression_hyperparameters,
 )
 
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
 
 def get_project_root():
     return str(_project_root())
@@ -34,12 +38,12 @@ def task_validate_raw_data(**kwargs):
     project_root = get_project_root()
     app_config = get_app_config()
 
-    raw_data_path_override = kwargs['params'].get('raw_data_path_override')
+    raw_data_path_override = kwargs["params"].get("raw_data_path_override")
     if raw_data_path_override:
         raw_data_path = os.path.join(project_root, raw_data_path_override)
         logger.info(f"Using overridden raw_data_path from DAG params: {raw_data_path}")
     else:
-        raw_data_path = os.path.join(project_root, app_config['data_paths']['raw_data'])
+        raw_data_path = os.path.join(project_root, app_config["data_paths"]["raw_data"])
         logger.info(f"Using raw_data_path from config: {raw_data_path}")
 
     validate_raw_data(raw_data_path)
@@ -51,15 +55,15 @@ def task_clean_and_engineer_data(**kwargs):
     project_root = get_project_root()
     app_config = get_app_config()
 
-    raw_data_path_override = kwargs['params'].get('raw_data_path_override')
+    raw_data_path_override = kwargs["params"].get("raw_data_path_override")
     if raw_data_path_override:
         raw_data_path = os.path.join(project_root, raw_data_path_override)
         logger.info(f"Using overridden raw_data_path from DAG params for cleaning: {raw_data_path}")
     else:
-        raw_data_path = os.path.join(project_root, app_config['data_paths']['raw_data'])
+        raw_data_path = os.path.join(project_root, app_config["data_paths"]["raw_data"])
         logger.info(f"Using raw_data_path from config for cleaning: {raw_data_path}")
 
-    cleaned_data_path = os.path.join(project_root, app_config['data_paths']['cleaned_data'])
+    cleaned_data_path = os.path.join(project_root, app_config["data_paths"]["cleaned_data"])
     os.makedirs(os.path.dirname(cleaned_data_path), exist_ok=True)
 
     clean_and_engineer_features(raw_data_path, cleaned_data_path)
@@ -68,21 +72,22 @@ def task_clean_and_engineer_data(**kwargs):
 
 def task_preprocess_for_modeling(**kwargs):
     logger.info("Starting task: Preprocess Data for Modeling")
-    ti = kwargs['ti']
+    ti = kwargs["ti"]
     project_root = get_project_root()
     app_config = get_app_config()
 
-    data_path_for_processor = os.path.join(project_root, app_config['data_paths']['cleaned_data'])
+    data_path_for_processor = os.path.join(project_root, app_config["data_paths"]["cleaned_data"])
 
-    df = load_data(data_path_for_processor) 
+    df = load_data(data_path_for_processor)
     if df.empty:
         raise ValueError("Failed to load cleaned data or DataFrame is empty.")
 
-    X_train_p, X_test_p, y_reg_train, y_reg_test, y_cls_train, y_cls_test, preprocessor_path = \
-        preprocess_data(df, project_root) 
+    X_train_p, X_test_p, y_reg_train, y_reg_test, y_cls_train, y_cls_test, preprocessor_path = preprocess_data(
+        df, project_root
+    )
 
     # Save processed data as pickle files
-    processed_data_dir = os.path.join(project_root, app_config['data_paths']['processed_data_dir'])
+    processed_data_dir = os.path.join(project_root, app_config["data_paths"]["processed_data_dir"])
     os.makedirs(processed_data_dir, exist_ok=True)
 
     processed_data_paths = {
@@ -92,7 +97,7 @@ def task_preprocess_for_modeling(**kwargs):
         "y_reg_test_path": os.path.join(processed_data_dir, "y_reg_test.pkl"),
         "y_cls_train_path": os.path.join(processed_data_dir, "y_cls_train.pkl"),
         "y_cls_test_path": os.path.join(processed_data_dir, "y_cls_test.pkl"),
-        "preprocessor_path": preprocessor_path
+        "preprocessor_path": preprocessor_path,
     }
 
     for path_key, path_value in processed_data_paths.items():
@@ -101,44 +106,56 @@ def task_preprocess_for_modeling(**kwargs):
             if not os.path.exists(dir_name):
                 os.makedirs(dir_name)
 
-    with open(processed_data_paths["X_train_p_path"], "wb") as f: pickle.dump(X_train_p, f)
-    with open(processed_data_paths["X_test_p_path"], "wb") as f: pickle.dump(X_test_p, f)
-    with open(processed_data_paths["y_reg_train_path"], "wb") as f: pickle.dump(y_reg_train, f)
-    with open(processed_data_paths["y_reg_test_path"], "wb") as f: pickle.dump(y_reg_test, f)
-    with open(processed_data_paths["y_cls_train_path"], "wb") as f: pickle.dump(y_cls_train, f)
-    with open(processed_data_paths["y_cls_test_path"], "wb") as f: pickle.dump(y_cls_test, f)
+    with open(processed_data_paths["X_train_p_path"], "wb") as f:
+        pickle.dump(X_train_p, f)
+    with open(processed_data_paths["X_test_p_path"], "wb") as f:
+        pickle.dump(X_test_p, f)
+    with open(processed_data_paths["y_reg_train_path"], "wb") as f:
+        pickle.dump(y_reg_train, f)
+    with open(processed_data_paths["y_reg_test_path"], "wb") as f:
+        pickle.dump(y_reg_test, f)
+    with open(processed_data_paths["y_cls_train_path"], "wb") as f:
+        pickle.dump(y_cls_train, f)
+    with open(processed_data_paths["y_cls_test_path"], "wb") as f:
+        pickle.dump(y_cls_test, f)
 
-    ti.xcom_push(key='processed_data_paths', value=processed_data_paths)
+    ti.xcom_push(key="processed_data_paths", value=processed_data_paths)
     logger.info(f"Data preprocessing for modeling complete. Paths pushed to XCom: {processed_data_paths}")
 
 
 def task_tune_hyperparameters(**kwargs):
     logger.info("Starting task: Tune Hyperparameters")
-    ti = kwargs['ti']
+    ti = kwargs["ti"]
     project_root = get_project_root()
     app_config = get_app_config()
 
-    tuning_enabled = app_config['pipeline']['tuning']['enabled']
+    tuning_enabled = app_config["pipeline"]["tuning"]["enabled"]
     if not tuning_enabled:
         logger.info("Hyperparameter tuning is disabled in config. Skipping task.")
-        ti.xcom_push(key='best_params_path', value=None)
+        ti.xcom_push(key="best_params_path", value=None)
         return
 
-    processed_data_paths = ti.xcom_pull(task_ids='preprocess_for_modeling_task', key='processed_data_paths')
+    processed_data_paths = ti.xcom_pull(task_ids="preprocess_for_modeling_task", key="processed_data_paths")
     if not processed_data_paths:
         raise ValueError("Failed to pull processed data paths from XCom for tuning.")
 
     # Load preprocessed data for tuning
-    with open(processed_data_paths["X_train_p_path"], "rb") as f: X_train = pickle.load(f)
-    with open(processed_data_paths["X_test_p_path"], "rb") as f: X_val = pickle.load(f)
-    with open(processed_data_paths["y_reg_train_path"], "rb") as f: y_reg_train = pickle.load(f)
-    with open(processed_data_paths["y_reg_test_path"], "rb") as f: y_reg_val = pickle.load(f)
-    with open(processed_data_paths["y_cls_train_path"], "rb") as f: y_cls_train = pickle.load(f)
-    with open(processed_data_paths["y_cls_test_path"], "rb") as f: y_cls_val = pickle.load(f)
+    with open(processed_data_paths["X_train_p_path"], "rb") as f:
+        X_train = pickle.load(f)
+    with open(processed_data_paths["X_test_p_path"], "rb") as f:
+        X_val = pickle.load(f)
+    with open(processed_data_paths["y_reg_train_path"], "rb") as f:
+        y_reg_train = pickle.load(f)
+    with open(processed_data_paths["y_reg_test_path"], "rb") as f:
+        y_reg_val = pickle.load(f)
+    with open(processed_data_paths["y_cls_train_path"], "rb") as f:
+        y_cls_train = pickle.load(f)
+    with open(processed_data_paths["y_cls_test_path"], "rb") as f:
+        y_cls_val = pickle.load(f)
 
     # Get tuning parameters
-    n_trials_reg = app_config['pipeline']['tuning']['n_trials_regression']
-    n_trials_cls = app_config['pipeline']['tuning']['n_trials_classification']
+    n_trials_reg = app_config["pipeline"]["tuning"]["n_trials_regression"]
+    n_trials_cls = app_config["pipeline"]["tuning"]["n_trials_classification"]
 
     # Perform tuning
     best_reg_params = tune_regression_hyperparameters(X_train, y_reg_train, X_val, y_reg_val, n_trials_reg)
@@ -147,14 +164,14 @@ def task_tune_hyperparameters(**kwargs):
     all_best_params = {"regression": best_reg_params, "classification": best_cls_params}
 
     # Define path for temporary local storage of best params
-    best_params_local_path = os.path.join(project_root, app_config['data_paths']['best_params'])
+    best_params_local_path = os.path.join(project_root, app_config["data_paths"]["best_params"])
 
     save_best_params(all_best_params, best_params_local_path)
 
     # MLflow tracking for the tuning run
-    mlflow_tracking_uri = app_config['mlflow']['tracking_uri']
+    mlflow_tracking_uri = app_config["mlflow"]["tracking_uri"]
     mlflow.set_tracking_uri(mlflow_tracking_uri)
-    mlflow.set_experiment(app_config['mlflow']['experiment_name'])
+    mlflow.set_experiment(app_config["mlflow"]["experiment_name"])
 
     with mlflow.start_run(run_name="hyperparameter_tuning") as run:
         logger.info(f"MLflow run started for Hyperparameter Tuning. Run ID: {run.info.run_id}")
@@ -166,36 +183,39 @@ def task_tune_hyperparameters(**kwargs):
         mlflow.log_artifact(best_params_local_path, artifact_path="best_params")
         logger.info(f"Logged best_params.json as artifact to MLflow: {best_params_local_path}")
 
-
-    ti.xcom_push(key='best_params_path', value=best_params_local_path) 
+    ti.xcom_push(key="best_params_path", value=best_params_local_path)
     logger.info(f"Hyperparameter tuning complete. Best params saved to {best_params_local_path} and pushed to XCom.")
 
 
 def task_train_evaluate_regression(**kwargs):
     logger.info("Starting task: Train, Evaluate, and Register Regression Model")
-    ti = kwargs['ti']
+    ti = kwargs["ti"]
     project_root = get_project_root()
     app_config = get_app_config()
 
-    mlflow_tracking_uri = app_config['mlflow']['tracking_uri'] # NEW: Read from 'mlflow' section
+    mlflow_tracking_uri = app_config["mlflow"]["tracking_uri"]  # NEW: Read from 'mlflow' section
     mlflow.set_tracking_uri(mlflow_tracking_uri)
-    mlflow.set_experiment(app_config['mlflow']['experiment_name'])
+    mlflow.set_experiment(app_config["mlflow"]["experiment_name"])
 
-    processed_data_paths = ti.xcom_pull(task_ids='preprocess_for_modeling_task', key='processed_data_paths')
-    best_params_local_path = ti.xcom_pull(task_ids='tune_hyperparameters_task', key='best_params_path')
+    processed_data_paths = ti.xcom_pull(task_ids="preprocess_for_modeling_task", key="processed_data_paths")
+    best_params_local_path = ti.xcom_pull(task_ids="tune_hyperparameters_task", key="best_params_path")
 
     if not processed_data_paths:
         raise ValueError("Failed to pull processed data paths from XCom.")
 
     # Load preprocessed data
-    with open(processed_data_paths["X_train_p_path"], "rb") as f: X_train_p = pickle.load(f)
-    with open(processed_data_paths["X_test_p_path"], "rb") as f: X_test_p = pickle.load(f)
-    with open(processed_data_paths["y_reg_train_path"], "rb") as f: y_reg_train = pickle.load(f)
-    with open(processed_data_paths["y_reg_test_path"], "rb") as f: y_reg_test = pickle.load(f)
+    with open(processed_data_paths["X_train_p_path"], "rb") as f:
+        X_train_p = pickle.load(f)
+    with open(processed_data_paths["X_test_p_path"], "rb") as f:
+        X_test_p = pickle.load(f)
+    with open(processed_data_paths["y_reg_train_path"], "rb") as f:
+        y_reg_train = pickle.load(f)
+    with open(processed_data_paths["y_reg_test_path"], "rb") as f:
+        y_reg_test = pickle.load(f)
 
     preprocessor_path = processed_data_paths.get("preprocessor_path")
 
-    mlflow.set_experiment(app_config['mlflow']['experiment_name'])
+    mlflow.set_experiment(app_config["mlflow"]["experiment_name"])
 
     with mlflow.start_run(run_name="regression_training") as run:
         logger.info(f"MLflow run started for Regression. Run ID: {run.info.run_id}")
@@ -208,13 +228,15 @@ def task_train_evaluate_regression(**kwargs):
             mlflow.log_artifact(preprocessor_path, artifact_path="preprocessor")
             logger.info(f"Logged preprocessor to MLflow from: {preprocessor_path}")
         else:
-            logger.warning(f"Preprocessor not found at {preprocessor_path} or path is None. Skipping preprocessor logging.")
+            logger.warning(
+                f"Preprocessor not found at {preprocessor_path} or path is None. Skipping preprocessor logging."
+            )
 
-        model_params = app_config['pipeline']['lgbm_params'].copy()
+        model_params = app_config["pipeline"]["lgbm_params"].copy()
         if best_params_local_path and os.path.exists(best_params_local_path):
-            with open(best_params_local_path, 'r') as f:
+            with open(best_params_local_path) as f:
                 all_best_params = json.load(f)
-            tuned_params = all_best_params.get('regression', {})
+            tuned_params = all_best_params.get("regression", {})
             model_params.update(tuned_params)
             logger.info(f"Loaded tuned parameters for regression: {tuned_params}")
         else:
@@ -223,35 +245,32 @@ def task_train_evaluate_regression(**kwargs):
         mlflow.log_params(model_params)
         logger.info(f"Logged parameters to MLflow: {model_params}")
 
-        reg_model = train_regression_model(X_train_p, y_reg_train) # Pass data only
-        reg_metrics, _ = evaluate_regression_model(reg_model, X_test_p, y_reg_test) # Pass data only
+        reg_model = train_regression_model(X_train_p, y_reg_train)  # Pass data only
+        reg_metrics, _ = evaluate_regression_model(reg_model, X_test_p, y_reg_test)  # Pass data only
 
-        serializable_metrics = {k: (float(v) if hasattr(v, 'item') else v) for k, v in reg_metrics.items()}
+        serializable_metrics = {k: (float(v) if hasattr(v, "item") else v) for k, v in reg_metrics.items()}
         mlflow.log_metrics(serializable_metrics)
         logger.info(f"Logged serializable metrics to MLflow: {serializable_metrics}")
         model_info = mlflow.sklearn.log_model(
-            sk_model=reg_model,
-            artifact_path="lgbm-regressor",
-            registered_model_name="flight-delay-regressor"
+            sk_model=reg_model, artifact_path="lgbm-regressor", registered_model_name="flight-delay-regressor"
         )
         logger.info("Regression model logged and registered with MLflow.")
 
         # --- NEW: Assign alias programmatically ---
         try:
             from mlflow import MlflowClient
+
             client = MlflowClient()
             new_version = model_info.registered_model_version
-            model_alias = app_config['pipeline'].get('model_alias_for_api', 'champion')
-            
-            client.set_registered_model_alias(
-                name="flight-delay-regressor",
-                alias=model_alias,
-                version=new_version
-            )
+            model_alias = app_config["pipeline"].get("model_alias_for_api", "champion")
+
+            client.set_registered_model_alias(name="flight-delay-regressor", alias=model_alias, version=new_version)
             logger.info(f"Successfully assigned alias '{model_alias}' to model version {new_version}.")
         except Exception as alias_err:
-            logger.warning(f"Failed to programmatically assign alias: {alias_err}. "
-                           "You may need to assign it manually via the MLflow UI.")
+            logger.warning(
+                f"Failed to programmatically assign alias: {alias_err}. "
+                "You may need to assign it manually via the MLflow UI."
+            )
 
     save_metrics(reg_metrics, "lgbm_regressor", subfolder="regression")
     save_model(reg_model, "lgbm_regressor", subfolder="regression")
@@ -260,28 +279,32 @@ def task_train_evaluate_regression(**kwargs):
 
 def task_train_evaluate_classification(**kwargs):
     logger.info("Starting task: Train, Evaluate, and Register Classification Model")
-    ti = kwargs['ti']
+    ti = kwargs["ti"]
     project_root = get_project_root()
     app_config = get_app_config()
 
-    mlflow_tracking_uri = app_config['mlflow']['tracking_uri'] # NEW: Read from 'mlflow' section
+    mlflow_tracking_uri = app_config["mlflow"]["tracking_uri"]  # NEW: Read from 'mlflow' section
     mlflow.set_tracking_uri(mlflow_tracking_uri)
-    mlflow.set_experiment(app_config['mlflow']['experiment_name'])
+    mlflow.set_experiment(app_config["mlflow"]["experiment_name"])
 
-    processed_data_paths = ti.xcom_pull(task_ids='preprocess_for_modeling_task', key='processed_data_paths')
-    best_params_local_path = ti.xcom_pull(task_ids='tune_hyperparameters_task', key='best_params_path')
+    processed_data_paths = ti.xcom_pull(task_ids="preprocess_for_modeling_task", key="processed_data_paths")
+    best_params_local_path = ti.xcom_pull(task_ids="tune_hyperparameters_task", key="best_params_path")
 
     if not processed_data_paths:
         raise ValueError("Failed to pull processed data paths from XCom for classification task.")
 
-    with open(processed_data_paths["X_train_p_path"], "rb") as f: X_train_p = pickle.load(f)
-    with open(processed_data_paths["X_test_p_path"], "rb") as f: X_test_p = pickle.load(f)
-    with open(processed_data_paths["y_cls_train_path"], "rb") as f: y_cls_train = pickle.load(f)
-    with open(processed_data_paths["y_cls_test_path"], "rb") as f: y_cls_test = pickle.load(f)
+    with open(processed_data_paths["X_train_p_path"], "rb") as f:
+        X_train_p = pickle.load(f)
+    with open(processed_data_paths["X_test_p_path"], "rb") as f:
+        X_test_p = pickle.load(f)
+    with open(processed_data_paths["y_cls_train_path"], "rb") as f:
+        y_cls_train = pickle.load(f)
+    with open(processed_data_paths["y_cls_test_path"], "rb") as f:
+        y_cls_test = pickle.load(f)
 
     preprocessor_path = processed_data_paths.get("preprocessor_path")
 
-    mlflow.set_experiment(app_config['mlflow']['experiment_name'])
+    mlflow.set_experiment(app_config["mlflow"]["experiment_name"])
 
     with mlflow.start_run(run_name="classification_training") as run:
         logger.info(f"MLflow run started for Classification. Run ID: {run.info.run_id}")
@@ -294,13 +317,15 @@ def task_train_evaluate_classification(**kwargs):
             mlflow.log_artifact(preprocessor_path, artifact_path="preprocessor")
             logger.info(f"Logged preprocessor to MLflow from: {preprocessor_path}")
         else:
-            logger.warning(f"Preprocessor not found at {preprocessor_path} or path is None. Skipping preprocessor logging.")
+            logger.warning(
+                f"Preprocessor not found at {preprocessor_path} or path is None. Skipping preprocessor logging."
+            )
 
-        model_params = app_config['pipeline']['logistic_params'].copy()
+        model_params = app_config["pipeline"]["logistic_params"].copy()
         if best_params_local_path and os.path.exists(best_params_local_path):
-            with open(best_params_local_path, 'r') as f:
+            with open(best_params_local_path) as f:
                 all_best_params = json.load(f)
-            tuned_params = all_best_params.get('classification', {})
+            tuned_params = all_best_params.get("classification", {})
             model_params.update(tuned_params)
             logger.info(f"Loaded tuned parameters for classification: {tuned_params}")
         else:
@@ -312,14 +337,12 @@ def task_train_evaluate_classification(**kwargs):
         cls_model = train_classification_model(X_train_p, y_cls_train)
         cls_metrics, _ = evaluate_classification_model(cls_model, X_test_p, y_cls_test)
 
-        serializable_cls_metrics = {k: (float(v) if hasattr(v, 'item') else v) for k, v in cls_metrics.items()}
+        serializable_cls_metrics = {k: (float(v) if hasattr(v, "item") else v) for k, v in cls_metrics.items()}
         mlflow.log_metrics(serializable_cls_metrics)
         logger.info(f"Logged serializable classification metrics to MLflow: {serializable_cls_metrics}")
 
         mlflow.sklearn.log_model(
-            sk_model=cls_model,
-            artifact_path="logistic-classifier",
-            registered_model_name="flight-delay-classifier"
+            sk_model=cls_model, artifact_path="logistic-classifier", registered_model_name="flight-delay-classifier"
         )
         logger.info("Classification model logged and registered with MLflow.")
 
@@ -327,18 +350,19 @@ def task_train_evaluate_classification(**kwargs):
     save_model(cls_model, "logistic_classifier", subfolder="classification")
     logger.info("Classification model training and MLflow logging complete.")
 
+
 def task_run_association_mining():
     """
     Airflow task to run the FP-Growth association Rule mining Task
     """
     logging.info("--- Starting Association Rule Mining Task ---")
     config = get_app_config()
-    project_root = get_project_root() # <-- Added this
+    project_root = get_project_root()  # <-- Added this
 
     # <-- Added project_root to these paths to make them absolute
-    cleaned_data_path = os.path.join(project_root, config['data_paths']['cleaned_data'])
-    results_dir = os.path.join(project_root, config['association_mining']['results']['path'])
-    output_path = os.path.join(results_dir, config['association_mining']['results']['association_rules_filename'])
+    cleaned_data_path = os.path.join(project_root, config["data_paths"]["cleaned_data"])
+    results_dir = os.path.join(project_root, config["association_mining"]["results"]["path"])
+    output_path = os.path.join(results_dir, config["association_mining"]["results"]["association_rules_filename"])
 
     # Create results directory if it doesn't exist
     os.makedirs(results_dir, exist_ok=True)
@@ -346,19 +370,19 @@ def task_run_association_mining():
     find_association_rules(
         data_path=cleaned_data_path,
         output_path=output_path,
-        min_support=config['association_mining']['min_support'],
-        min_threshold=config['association_mining']['min_threshold']
+        min_support=config["association_mining"]["min_support"],
+        min_threshold=config["association_mining"]["min_threshold"],
     )
     logging.info("--- Association Rule Mining Task Completed ---")
 
 
 def task_cleanup_processed_data(**kwargs):
     logger.info("Starting task: Cleanup Processed Data")
-    ti = kwargs['ti']
+    ti = kwargs["ti"]
     project_root = get_project_root()
     app_config = get_app_config()
 
-    processed_data_paths = ti.xcom_pull(task_ids='preprocess_for_modeling_task', key='processed_data_paths')
+    processed_data_paths = ti.xcom_pull(task_ids="preprocess_for_modeling_task", key="processed_data_paths")
     if not processed_data_paths:
         logger.warning("No processed data paths found in XCom for cleanup.")
         return
@@ -371,7 +395,7 @@ def task_cleanup_processed_data(**kwargs):
         processed_data_paths["y_reg_test_path"],
         processed_data_paths["y_cls_train_path"],
         processed_data_paths["y_cls_test_path"],
-        os.path.join(project_root, app_config['data_paths']['best_params'])
+        os.path.join(project_root, app_config["data_paths"]["best_params"]),
     ]
 
     for path_value in paths_to_delete:

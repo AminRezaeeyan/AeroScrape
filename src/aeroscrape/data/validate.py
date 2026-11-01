@@ -1,19 +1,29 @@
+import logging
+
 import pandas as pd
 import pandera.pandas as pa
 from pandera.errors import SchemaError
-import logging
 
 logger = logging.getLogger(__name__)
 
-raw_data_schema = pa.DataFrameSchema({
-    "scheduled_time": pa.Column(pa.String, nullable=False),
-    "actual_time": pa.Column(pa.String, nullable=True),
-    "airline": pa.Column(pa.String, nullable=False),
-    "flight_number": pa.Column(pa.String, nullable=False),
-    "destination_or_origin": pa.Column(pa.String, nullable=False),
-    "status": pa.Column(pa.String, nullable=False),
-    "flight_type": pa.Column(pa.String, pa.Check.isin(['Domestic Departure', 'Domestic Arrival', 'International Arrival', 'International Departure'])),
-}, strict=False)
+raw_data_schema = pa.DataFrameSchema(
+    {
+        "scheduled_time": pa.Column(pa.String, nullable=False),
+        "actual_time": pa.Column(pa.String, nullable=True),
+        "airline": pa.Column(pa.String, nullable=False),
+        "flight_number": pa.Column(pa.String, nullable=False),
+        "destination_or_origin": pa.Column(pa.String, nullable=False),
+        "status": pa.Column(pa.String, nullable=False),
+        "flight_type": pa.Column(
+            pa.String,
+            pa.Check.isin(
+                ["Domestic Departure", "Domestic Arrival", "International Arrival", "International Departure"]
+            ),
+        ),
+    },
+    strict=False,
+)
+
 
 def validate_raw_data(data_path):
     logger.info(f"Validating raw data from {data_path}")
