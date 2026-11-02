@@ -6,8 +6,27 @@ AeroScrape is a comprehensive MLOps (Machine Learning Operations) project design
 _Screenshot of the Airflow DAG orchestrating the ML pipeline._
 
 
+## Results
+
+Evaluated on a chronological split: trained on 2025-05-22 to 06-09, tested once on 06-10 to 06-12 (442 departures from Mehrabad and Mashhad). Brackets are 95% bootstrap intervals; full report in [docs/results/evaluation.md](docs/results/evaluation.md), regenerated with `make evaluate`.
+
+| Delay in minutes | MAE (min) |
+| --- | --- |
+| Global median (baseline) | 25.2 [20.9, 29.8] |
+| Airline × time-of-day median (baseline) | 24.6 [20.3, 29.3] |
+| LightGBM | 24.4 [20.2, 29.0] |
+
+| Delayed more than 15 min | Accuracy | Brier |
+| --- | --- | --- |
+| Always "delayed" (baseline) | 0.679 | 0.219 |
+| Airline delay rate (baseline) | 0.704 | 0.202 |
+| Logistic regression | 0.697 | 0.202 |
+
+**Neither model beats its best baseline yet.** The paired difference against the best baseline is -0.2 [-0.8, 0.2] minutes MAE for LightGBM and 0.000 [-0.008, 0.008] Brier for logistic regression; both intervals include zero. The current features are calendar fields and categories, which an airline-and-time-of-day average already captures. Earlier versions reported better-looking numbers from a random split and tuned on the test set.
+
 ## Table of Contents
 
+-   [Results](#results)
 -   [Features](#features)
 -   [Architecture Overview](#architecture-overview)
 -   [Getting Started (Docker Compose - Recommended)](#getting-started-docker-compose---recommended)
