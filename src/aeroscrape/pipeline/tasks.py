@@ -14,13 +14,14 @@ from pathlib import Path
 
 import mlflow
 import pandas as pd
-from mlflow import MlflowClient
 
 from aeroscrape.analysis.association import find_association_rules
 from aeroscrape.config import get_app_config, resolve_path
 from aeroscrape.data.clean import clean_flights_file, read_flights
+from aeroscrape.data.sources import build_dataset
 from aeroscrape.data.split import Splits
 from aeroscrape.data.validate import validate_raw_data
+from aeroscrape.models.baselines import GroupMedianRegressor
 from aeroscrape.models.delay_model import log_delay_model
 from aeroscrape.models.experiment import (
     TunedParams,
@@ -30,6 +31,8 @@ from aeroscrape.models.experiment import (
     train_and_evaluate,
     tune_models,
 )
+from aeroscrape.models.gate import ModelPredictions, evaluate_gate
+from aeroscrape.models.registry import CHALLENGER, CHAMPION, alias_version, client_and_name, promote
 from aeroscrape.models.tune import save_best_params
 
 logger = logging.getLogger(__name__)
@@ -81,10 +84,13 @@ def task_validate_raw_data(**kwargs):
     validate_raw_data(raw_path)
 
 
-def task_clean_and_engineer_data(**kwargs):
-    raw_path = _raw_data_path(kwargs)
+def task_build_dataset(**kwargs):
+    """Clean every flight from the archive and the flight database into this run's directory."""
     cleaned_path = _run_dir(kwargs) / "cleaned.csv"
-    audit = clean_flights_file(raw_path, cleaned_path)
+    if kwargs["params"].get("raw_data_path_override"):
+        audit = clean_flights_file(_raw_data_path(kwargs), cleaned_path)
+    else:
+        audit = build_dataset(get_app_config(), cleaned_path)
     logger.info("Cleaning audit:\n%s", audit.to_markdown())
     kwargs["ti"].xcom_push(key="cleaned_path", value=str(cleaned_path))
 
@@ -93,8 +99,19 @@ def task_split_data(**kwargs):
     """Split cleaned flights by scheduled time and store each split as Parquet."""
     ti = kwargs["ti"]
     app_config = get_app_config()
-    flights = read_flights(ti.xcom_pull(task_ids="clean_and_engineer_data_task", key="cleaned_path"))
+    flights = read_flights(ti.xcom_pull(task_ids="build_dataset", key="cleaned_path"))
     splits = make_splits(flights, app_config)
+
+    # For testing the gate: train on a random share of train+val; the held-out test window is untouched
+    fraction = float(kwargs["params"].get("train_fraction") or 1.0)
+    if fraction < 1.0:
+        seed = app_config["pipeline"]["random_state"]
+        splits = Splits(
+            splits.train.sample(frac=fraction, random_state=seed).sort_values("scheduled_datetime"),
+            splits.val.sample(frac=fraction, random_state=seed).sort_values("scheduled_datetime"),
+            splits.test,
+        )
+        logger.warning("Training on %.0f%% of train+val (train_fraction=%s)", fraction * 100, fraction)
 
     out_dir = _run_dir(kwargs) / "splits"
     out_dir.mkdir(exist_ok=True)
@@ -108,7 +125,7 @@ def task_tune_hyperparameters(**kwargs):
     """Tune with rolling-origin CV on train+val. The test split is never loaded here."""
     ti = kwargs["ti"]
     app_config = get_app_config()
-    paths = ti.xcom_pull(task_ids="split_data_task", key="split_paths")
+    paths = ti.xcom_pull(task_ids="split_data", key="split_paths")
     train_val = Splits(train=pd.read_parquet(paths["train"]), val=pd.read_parquet(paths["val"]), test=pd.DataFrame())
     params = tune_models(train_val, app_config)
 
@@ -136,8 +153,8 @@ def task_train_and_evaluate(**kwargs):
     _git_from_conf(kwargs)
     app_config = get_app_config()
     pipeline_cfg = app_config["pipeline"]
-    splits = _load_splits(ti.xcom_pull(task_ids="split_data_task", key="split_paths"))
-    with open(ti.xcom_pull(task_ids="tune_hyperparameters_task", key="best_params_path")) as f:
+    splits = _load_splits(ti.xcom_pull(task_ids="split_data", key="split_paths"))
+    with open(ti.xcom_pull(task_ids="tune_hyperparameters", key="best_params_path")) as f:
         params = TunedParams.from_dict(json.load(f))
 
     lineage = experiment_lineage(splits, app_config, _raw_data_path(kwargs))
@@ -157,7 +174,8 @@ def task_train_and_evaluate(**kwargs):
         )
         mlflow.set_tags(lineage | {"airflow_run_id": kwargs["run_id"], "served_variant": bundle.variant})
         mlflow.log_params(_flat_params(params))
-        mlflow.log_params({f"split.{k}": app_config["evaluation"][k] for k in ("train_end", "val_end")})
+        mlflow.log_params({f"split.{name}_rows": len(getattr(splits, name)) for name in SPLIT_NAMES})
+        mlflow.log_param("train_fraction", kwargs["params"].get("train_fraction") or 1.0)
         mlflow.log_params(
             {f"served.{k}": v for k, v in bundle.metadata.items() if k not in ("features", "trained_on", "lineage")}
         )
@@ -170,24 +188,120 @@ def task_train_and_evaluate(**kwargs):
         mlflow.log_artifact(str(resolve_path("config.yaml")), artifact_path="config")
 
     # The registered version carries the lineage too, so it is visible from the registry
-    client = MlflowClient()
+    client, name = client_and_name(app_config)
+    version = info.registered_model_version
     for key in ("git_commit", "git_dirty", "training_data_sha256", "training_from", "training_to"):
-        client.set_model_version_tag(
-            pipeline_cfg["model_registry_name"], info.registered_model_version, key, lineage[key]
-        )
+        client.set_model_version_tag(name, version, key, lineage[key])
 
-    # Every run still becomes the served model; a champion/challenger gate replaces this in Phase 5
-    alias = pipeline_cfg.get("model_alias_for_api", "production")
-    client.set_registered_model_alias(pipeline_cfg["model_registry_name"], alias, info.registered_model_version)
-    logger.info(
-        "Set alias '%s' to %s version %s", alias, pipeline_cfg["model_registry_name"], info.registered_model_version
+    # Registered as the challenger; only the gate can make it the production model
+    client.set_registered_model_alias(name, CHALLENGER, version)
+    ti.xcom_push(key="challenger_version", value=str(version))
+    logger.info("Registered %s version %s as %s", name, version, CHALLENGER)
+
+
+def _gate_predictions(model_uri: str, frame: pd.DataFrame, name: str) -> ModelPredictions:
+    model = mlflow.pyfunc.load_model(model_uri)
+    bundle = model.unwrap_python_model().bundle
+    out = model.predict(bundle.prepare_input(frame))
+    return ModelPredictions(
+        name,
+        out["p50"].to_numpy(),
+        out["p10"].to_numpy(),
+        out["p90"].to_numpy(),
+        out["p_delay_over_15"].to_numpy(),
     )
+
+
+def task_evaluate_gate(**kwargs):
+    """Score champion and challenger, both loaded from the registry, on the same held-out flights."""
+    ti = kwargs["ti"]
+    app_config = get_app_config()
+    pipeline_cfg, eval_cfg = app_config["pipeline"], app_config["evaluation"]
+    splits = _load_splits(ti.xcom_pull(task_ids="split_data", key="split_paths"))
+    test = splits.test
+    client, name = client_and_name(app_config)
+    challenger_version = ti.xcom_pull(task_ids="train_and_evaluate", key="challenger_version")
+    champion_version = alias_version(client, name, CHAMPION)
+
+    _start_mlflow(app_config)
+    challenger = _gate_predictions(f"models:/{name}/{challenger_version}", test, f"version {challenger_version}")
+    champion = None
+    notes = []
+    if champion_version is not None:
+        champion = _gate_predictions(f"models:/{name}/{champion_version}", test, f"version {champion_version}")
+        trained_to = client.get_model_version(name, champion_version).tags.get("training_to")
+        if trained_to and pd.Timestamp(trained_to) >= test[eval_cfg["time_column"]].min():
+            notes.append(
+                f"The champion was trained on data up to {trained_to}, which overlaps the gate window, "
+                "so the comparison favors the champion."
+            )
+
+    baseline = (
+        GroupMedianRegressor(["airline", "scheduled_time_of_day"])
+        .fit(splits.train_val, splits.train_val[pipeline_cfg["target_regression"]])
+        .predict(test)
+    )
+    result = evaluate_gate(
+        test[pipeline_cfg["target_regression"]].to_numpy(),
+        test[pipeline_cfg["target_classification"]].to_numpy(),
+        challenger,
+        champion,
+        baseline,
+        pipeline_cfg["gate"],
+        eval_cfg["bootstrap_samples"],
+        eval_cfg["confidence_level"],
+        pipeline_cfg["random_state"],
+    )
+    result.notes += notes
+    champion_label = f"version {champion_version}" if champion_version else "no champion"
+    table = result.to_markdown(champion_label, f"version {challenger_version}")
+    logger.info("\n%s", table)
+
+    client.set_model_version_tag(name, challenger_version, "gate_decision", result.decision)
+    with mlflow.start_run(run_name="promotion_gate") as run:
+        mlflow.set_tags(
+            {
+                "airflow_run_id": kwargs["run_id"],
+                "challenger_version": challenger_version,
+                "champion_version": champion_version or "none",
+                "decision": result.decision,
+            }
+        )
+        mlflow.log_metrics(result.metrics)
+        mlflow.log_text(table, "gate/comparison.md")
+    ti.xcom_push(key="decision", value=result.decision)
+    ti.xcom_push(key="gate_run_id", value=run.info.run_id)
+
+
+def choose_branch(**kwargs) -> str:
+    decision = kwargs["ti"].xcom_pull(task_ids="evaluate_gate", key="decision")
+    return "promote" if decision == "promote" else "reject"
+
+
+def _record_action(kwargs, action: str) -> None:
+    run_id = kwargs["ti"].xcom_pull(task_ids="evaluate_gate", key="gate_run_id")
+    _start_mlflow(get_app_config())
+    with mlflow.start_run(run_id=run_id):
+        mlflow.set_tag("action", action)
+
+
+def task_promote(**kwargs):
+    client, name = client_and_name(get_app_config())
+    version = kwargs["ti"].xcom_pull(task_ids="train_and_evaluate", key="challenger_version")
+    promote(client, name, version, reason=f"passed gate in {kwargs['run_id']}")
+    _record_action(kwargs, f"promoted version {version} to production")
+
+
+def task_reject(**kwargs):
+    version = kwargs["ti"].xcom_pull(task_ids="train_and_evaluate", key="challenger_version")
+    _record_action(kwargs, f"kept the champion; version {version} stays challenger")
+    logger.info("Challenger version %s rejected by the gate; production unchanged", version)
 
 
 def task_run_association_mining(**kwargs):
     """FP-Growth association rules over the cleaned departures (exploratory, not used by the models)."""
     config = get_app_config()
-    cleaned_path = kwargs["ti"].xcom_pull(task_ids="clean_and_engineer_data_task", key="cleaned_path")
+    cleaned_path = kwargs["ti"].xcom_pull(task_ids="build_dataset", key="cleaned_path")
     output_path = _run_dir(kwargs) / config["association_mining"]["results"]["association_rules_filename"]
     find_association_rules(
         data_path=cleaned_path,

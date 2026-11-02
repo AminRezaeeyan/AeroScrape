@@ -112,6 +112,12 @@ services:
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@db:${DB_PORT}/${AIRFLOW_DB_NAME}
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      # Ingest loads scraped flights and training reads them, as the limited application role
+      - DB_HOST=db
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
       - AIRFLOW__CORE__LOGGING_LEVEL=INFO
     volumes:
       - ./dags:/opt/airflow/dags
