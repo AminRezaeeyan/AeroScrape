@@ -16,6 +16,8 @@ services:
       - POSTGRES_DB=${DB_NAME}
       - APP_DB_USER=${DB_USER}
       - APP_DB_PASSWORD=${DB_PASSWORD}
+      - READER_DB_USER=${DB_READER_USER}
+      - READER_DB_PASSWORD=${DB_READER_PASSWORD}
       - AIRFLOW_DB_NAME=${AIRFLOW_DB_NAME}
       - AIRFLOW_DB_USER=${AIRFLOW_DB_USER}
       - AIRFLOW_DB_PASSWORD=${AIRFLOW_DB_PASSWORD}
@@ -135,6 +137,12 @@ services:
     container_name: flight_api
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      # Read-only database role for the feature lookup
+      - DB_HOST=db
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_READER_USER}
+      - DB_PASSWORD=${DB_READER_PASSWORD}
     working_dir: /opt/airflow
     command: uvicorn aeroscrape.serving.api:app --host 0.0.0.0 --port 8000
     volumes:
@@ -147,6 +155,8 @@ services:
     networks:
       - flight_network
     depends_on:
+      db:
+        condition: service_healthy
       mlflow:
         condition: service_started
 

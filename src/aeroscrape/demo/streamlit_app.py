@@ -21,6 +21,10 @@ with st.form("prediction_form"):
 
     destination_or_origin = st.text_input("Destination or Origin City", value="مشهد")
     aircraft = st.text_input("Aircraft Model", value="MD83")
+    flight_number = st.text_input(
+        "Flight number (optional)", help="If the flight was scraped, its aircraft rotation is used, e.g. IRM1036"
+    )
+    register = st.text_input("Aircraft registration (optional)", help="e.g. EPMOH")
 
     # Date and Time Inputs
     col1, col2 = st.columns(2)
@@ -40,6 +44,8 @@ if submit_btn:
         "airport": airport,
         "destination_or_origin": destination_or_origin,
         "aircraft": aircraft,
+        "flight_number": flight_number or None,
+        "register": register or None,
         "scheduled_datetime": scheduled_datetime,
     }
 

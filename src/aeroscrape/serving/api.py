@@ -9,8 +9,10 @@ from pydantic import BaseModel
 
 from aeroscrape.config import get_app_config
 from aeroscrape.data.clean import normalize_persian
-from aeroscrape.features.build import add_calendar_features
+from aeroscrape.features.build import FeatureSettings, add_calendar_features
 from aeroscrape.models.delay_model import DelayModelBundle
+from aeroscrape.serving.feature_lookup import FeatureLookup
+from aeroscrape.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,7 @@ model = None  # MLflow pyfunc: enforces the input signature
 bundle: DelayModelBundle | None = None  # the same model unwrapped, for explanations and metadata
 model_version: str | None = None
 app_config = None
+lookup: FeatureLookup | None = None
 
 EXPLANATION_UNITS = "log-odds of a delay over 15 minutes, from the uncalibrated LightGBM classifier"
 
@@ -40,9 +43,20 @@ def load_model():
         model, bundle, model_version = None, None, None
 
 
+def load_lookup():
+    """Connect the feature lookup to the flight database (read-only role)."""
+    global lookup
+    try:
+        lookup = FeatureLookup(Database(), FeatureSettings.from_config(get_app_config()))
+    except Exception as e:
+        logger.warning("Feature lookup unavailable: %s. Only request-time features will be used.", e)
+        lookup = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_model()
+    load_lookup()
     yield
     global model, bundle
     model, bundle = None, None
@@ -62,6 +76,9 @@ class FlightInput(BaseModel):
     destination_or_origin: str
     aircraft: str
     scheduled_datetime: str
+    # With these, the lookup finds the scraped flight and the aircraft's rotation
+    flight_number: str | None = None
+    register: str | None = None
 
 
 class DelayRange(BaseModel):
@@ -91,10 +108,12 @@ class PredictionOutput(BaseModel):
 
 
 def create_features(data: FlightInput, features: list[str]) -> tuple[pd.DataFrame, list[str]]:
-    """Build the model's input from one request. Returns the features and the ones that stay unknown."""
-    df = pd.DataFrame([data.model_dump()])
+    """Build the model's input for one request with the training feature code.
+
+    Returns the features and any warnings about information that couldn't be found.
+    """
     try:
-        df["scheduled_datetime"] = pd.to_datetime(df["scheduled_datetime"], errors="raise")
+        scheduled = pd.to_datetime(data.scheduled_datetime, errors="raise")
     except Exception as e:
         logger.error(f"Error parsing scheduled_datetime '{data.scheduled_datetime}': {e}")
         raise HTTPException(
@@ -102,16 +121,29 @@ def create_features(data: FlightInput, features: list[str]) -> tuple[pd.DataFram
             detail="Invalid scheduled_datetime format. Use YYYY-MM-DD HH:MM:SS.",
         ) from e
 
-    # Same text normalization as the cleaner, so Arabic and Persian spellings match training
+    request = data.model_dump() | {"scheduled_datetime": str(scheduled)}
+    warnings = []
+    if lookup is not None:
+        try:
+            result = lookup.lookup(request)
+            if data.flight_number and not result.matched_flight:
+                warnings.append("Flight not found among scraped flights; features use the request only.")
+            unknown = [c for c in features if pd.isna(result.features.iloc[0].get(c))]
+            if unknown:
+                warnings.append(f"Not known for this flight, filled by the model: {', '.join(unknown)}")
+            return result.features.reindex(columns=features), warnings
+        except Exception as e:
+            logger.error("Feature lookup failed: %s", e, exc_info=True)
+
+    # Without the lookup only the request's own fields are available
+    df = pd.DataFrame([request])
+    df["scheduled_datetime"] = scheduled
     for col in ("airline", "airport", "destination_or_origin", "aircraft"):
         df[col] = df[col].map(normalize_persian)
     df = add_calendar_features(df)
-
-    # Features that need other flights (rotation, rates, live delays) can't be computed from one
-    # request yet; they stay missing and the model's imputer fills them. Phase 4 adds a feature
-    # lookup so the API builds them with the same code as training.
     missing = [col for col in features if col not in df.columns]
-    return df.reindex(columns=features), missing
+    warnings.append(f"Flight database unavailable; filled by the model: {', '.join(missing)}")
+    return df.reindex(columns=features), warnings
 
 
 @app.post("/predict", response_model=PredictionOutput, status_code=status.HTTP_200_OK)
@@ -120,11 +152,10 @@ async def predict(flight_data: FlightInput):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model is not loaded.")
 
     try:
-        features, missing = create_features(flight_data, bundle.features.columns)
+        features, warnings = create_features(flight_data, bundle.features.columns)
         X = bundle.prepare_input(features)
         prediction = model.predict(X).iloc[0]
         factors = bundle.explain(X, top=6)[0]
-        warnings = [f"Not computed from a single request, filled by the model: {', '.join(missing)}"] if missing else []
         p50 = round(float(prediction["p50"]), 1)
         likely = bool(prediction["likely_delayed"])
         return {
@@ -162,4 +193,9 @@ async def reload_assets():
 async def health_check():
     if model is None or bundle is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model is not loaded.")
-    return {"status": "ok", "model_version": model_version, "variant": bundle.variant}
+    return {
+        "status": "ok",
+        "model_version": model_version,
+        "variant": bundle.variant,
+        "feature_lookup": "connected" if lookup is not None else "unavailable",
+    }
