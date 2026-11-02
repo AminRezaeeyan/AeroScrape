@@ -108,7 +108,7 @@ This is the easiest way to launch the entire MLOps environment. All components (
    * Wait for all steps in the DAG (data validation, preprocessing, tuning, training, registry) to complete successfully and turn green.
 
 5. **Load the Registered Model into the API:**
-   Once the DAG finishes training and registers the model inside MLflow, trigger the hot-reload endpoint in your FastAPI service:
+   Once the DAG finishes training and registers `flight-delay-model` in MLflow, load it into the API:
    ```bash
    curl -X POST http://localhost:8000/reload
    ```
@@ -336,54 +336,40 @@ The FastAPI service provides a RESTful API for real-time flight delay prediction
 
 ### `/predict` (POST)
 
-**Usage:** Predicts flight delay based on input flight details and returns SHAP contributions.
-
-**Request Body Example:**
+Returns a calibrated probability of a delay over 15 minutes, a likely delay range and the main factors. Features are built from the flight database with the same code as training ([docs/serving.md](docs/serving.md)); `flight_number` and `register` are optional, but with them the aircraft's rotation is used.
 
 ```bash
-curl -X 'POST' \
-  'http://localhost:8000/predict' \
-  -H 'accept: application/json' \
+curl -X POST http://localhost:8000/predict \
   -H 'Content-Type: application/json' \
   -d '{
-    "airline": "کاسپین",
+    "airline": "وارش",
     "airport": "فرودگاه مهرآباد",
     "destination_or_origin": "مشهد",
-    "aircraft": "MD83",
-    "scheduled_datetime": "2026-06-03 21:11:00"
+    "aircraft": "737",
+    "scheduled_datetime": "2026-11-03 08:05:00",
+    "flight_number": "VRH5840"
   }'
 ```
 
-**Response Body Example (Success):**
-
 ```json
 {
-  "predicted_delay_minutes": 35.22,
-  "is_delayed": true,
-  "explainability": [
-    {
-      "feature": "Destination Or Origin: Mashhad",
-      "contribution": 5.3
-    },
-    {
-      "feature": "Day Of Week: Wednesday",
-      "contribution": 3.4
-    },
-    {
-      "feature": "Scheduled Hour Of Day",
-      "contribution": 2.5
-    },
-    {
-      "feature": "Aircraft: Md83",
-      "contribution": 1.9
-    },
-    {
-      "feature": "Airline: Caspian",
-      "contribution": -3.8
-    }
-  ]
+  "model_version": "2",
+  "p_delay_over_15": 0.664,
+  "likely_delayed": false,
+  "decision_threshold": 0.69,
+  "delay_minutes": {"p10": 4.7, "p50": 20.1, "p90": 107.9},
+  "top_factors": [
+    {"feature": "nth_flight_of_day_for_aircraft", "value": "1", "contribution": 0.163},
+    {"feature": "destination_or_origin", "value": "مشهد", "contribution": 0.136}
+  ],
+  "explanation_units": "log-odds of a delay over 15 minutes, from the uncalibrated LightGBM classifier",
+  "warnings": ["Not known for this flight, filled by the model: scheduled_turnaround_min"],
+  "predicted_delay_minutes": 20.1,
+  "is_delayed": false
 }
 ```
+
+`predicted_delay_minutes` and `is_delayed` repeat `p50` and `likely_delayed` for clients of the earlier response format.
 
 ## Contributors
 
