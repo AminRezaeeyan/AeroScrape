@@ -39,9 +39,7 @@ class FakeBundle:
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # Not used as a context manager, so startup never contacts MLflow
     fake = FakeBundle()
-    monkeypatch.setattr(api, "model", fake)
-    monkeypatch.setattr(api, "bundle", fake)
-    monkeypatch.setattr(api, "model_version", "7")
+    monkeypatch.setattr(api, "served", api.ServedModel(fake, fake, "7"))
     return TestClient(api.app)
 
 
@@ -61,7 +59,7 @@ def test_bad_datetime_returns_400(client: TestClient) -> None:
 
 
 def test_predict_returns_503_without_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(api, "model", None)
+    monkeypatch.setattr(api, "served", None)
     response = TestClient(api.app).post("/predict", json=PAYLOAD)
     assert response.status_code == 503
 
@@ -75,7 +73,7 @@ def test_features_come_from_the_flight_database(client: TestClient, monkeypatch:
         seen["X"] = X
         return FakeBundle.predict(None, X)
 
-    monkeypatch.setattr(api.bundle, "predict", capture)
+    monkeypatch.setattr(api.served.bundle, "predict", capture)
     flight = raw[(raw["flight_type"] == "Domestic Departure") & raw["register"].notna()].iloc[-1]
     response = client.post(
         "/predict",
@@ -99,3 +97,37 @@ def test_unknown_flight_is_reported(client: TestClient, monkeypatch: pytest.Monk
     monkeypatch.setattr(api, "lookup", FeatureLookup(FrameSource(raw), FeatureSettings()))
     body = client.post("/predict", json={**PAYLOAD, "flight_number": "NOPE1"}).json()
     assert any("not found" in w for w in body["warnings"])
+
+
+def test_promoted_version_is_swapped_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Registry:
+        version = "7"
+
+        def get_model_version_by_alias(self, name, alias):
+            return type("V", (), {"version": self.version})()
+
+    class Loaded:
+        def unwrap_python_model(self):
+            return type("W", (), {"bundle": FakeBundle()})()
+
+    registry = Registry()
+    monkeypatch.setattr(api, "_registry", lambda: (registry, "flight-delay-model", "production"))
+    monkeypatch.setattr(api.mlflow.pyfunc, "load_model", lambda uri: Loaded())
+    monkeypatch.setattr(api, "served", None)
+
+    assert api.refresh_if_promoted() and api.served.version == "7"
+    assert not api.refresh_if_promoted()  # unchanged alias: no reload
+    registry.version = "8"
+    assert api.refresh_if_promoted() and api.served.version == "8"
+
+
+def test_failed_registry_check_keeps_the_current_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    current = api.ServedModel(FakeBundle(), FakeBundle(), "7")
+    monkeypatch.setattr(api, "served", current)
+
+    def broken():
+        raise ConnectionError("MLflow down")
+
+    monkeypatch.setattr(api, "_registry", broken)
+    assert not api.refresh_if_promoted()
+    assert api.served is current
