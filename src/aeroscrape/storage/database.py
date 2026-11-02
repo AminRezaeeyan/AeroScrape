@@ -8,7 +8,6 @@ from typing import Any
 import jdatetime
 import pandas as pd
 import psycopg2
-from psycopg2.extras import DictCursor
 
 from aeroscrape.config import get_db_settings
 
@@ -429,105 +428,56 @@ class Database:
             logging.error(f"Error formatting datetime {dt_obj} to Persian weekday time: {e}")
             return ""
 
+    def fetch_flights(self, start: datetime | None = None, end: datetime | None = None) -> pd.DataFrame:
+        """Flights scheduled in [start, end), in the scraped CSV format the cleaner reads.
+
+        Training reads this format from an export; the API's feature lookup reads it straight
+        from here, so both go through the same cleaning and feature code.
+        """
+        conditions, params = [], []
+        if start is not None:
+            conditions.append("f.scheduled_time >= %s")
+            params.append(start)
+        if end is not None:
+            conditions.append("f.scheduled_time < %s")
+            params.append(end)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        query = f"""
+            SELECT f.scheduled_time, f.airline, f.flight_number, f.place AS destination_or_origin,
+                   f.status, f.counter, f.actual_time, f.register, f.aircraft,
+                   ap.name AS airport, f.flight_type
+            FROM (
+                SELECT scheduled_time, airline, flight_number, origin AS place, status, counter, actual_time,
+                       register, aircraft, airport_id,
+                       CASE WHEN is_international THEN 'International Arrival' ELSE 'Domestic Arrival' END AS flight_type
+                FROM arrivals
+                UNION ALL
+                SELECT scheduled_time, airline, flight_number, destination, status, counter, actual_time,
+                       register, aircraft, airport_id,
+                       CASE WHEN is_international THEN 'International Departure' ELSE 'Domestic Departure' END
+                FROM departures
+            ) f
+            LEFT JOIN airports ap ON f.airport_id = ap.id
+            {where}
+        """
+        with self.get_connection() as conn, conn.cursor() as cur:
+            cur.execute(query, params)
+            columns = [c.name for c in cur.description]
+            df = pd.DataFrame(cur.fetchall(), columns=columns)
+        for col in ("scheduled_time", "actual_time"):
+            df[col] = pd.to_datetime(df[col]).dt.strftime("%Y-%m-%d %H:%M:%S")
+        return df.astype(object).where(df.notna(), None)
+
     def export_csv(self, filepath: str) -> bool:
-        """
-        Exports data from arrivals and departures tables to a single CSV file.
-        Scheduled and actual times are exported as Gregorian datetime strings (YYYY-MM-DD HH:MM:SS).
-        """
-        all_flight_records = []
-
-        csv_column_names = [
-            "scheduled_time",
-            "airline",
-            "flight_number",
-            "destination_or_origin",
-            "status",
-            "counter",
-            "actual_time",
-            "register",
-            "aircraft",
-            "airport",
-            "flight_type",
-        ]
-
+        """Export arrivals and departures to one CSV file with Gregorian datetimes (YYYY-MM-DD HH:MM:SS)."""
         try:
-            with self.get_connection() as conn:
-                with conn.cursor(cursor_factory=DictCursor) as cur_arr:
-                    cur_arr.execute("""
-                        SELECT
-                            a.scheduled_time, a.airline, a.flight_number, a.origin,
-                            a.status, a.counter, a.actual_time, a.register,
-                            a.aircraft, ap.name as airport_name, a.is_international
-                        FROM arrivals a
-                        LEFT JOIN airports ap ON a.airport_id = ap.id
-                    """)
-                    for row in cur_arr.fetchall():
-                        flight_type_str = "International Arrival" if row["is_international"] else "Domestic Arrival"
-                        record = {
-                            "scheduled_time": row["scheduled_time"].strftime("%Y-%m-%d %H:%M:%S")
-                            if row["scheduled_time"]
-                            else "",
-                            "airline": row["airline"] if row["airline"] is not None else "",
-                            "flight_number": row["flight_number"] if row["flight_number"] is not None else "",
-                            "destination_or_origin": row["origin"] if row["origin"] is not None else "",
-                            "status": row["status"] if row["status"] is not None else "",
-                            "counter": str(row["counter"]) if row["counter"] is not None else "",
-                            "actual_time": row["actual_time"].strftime("%Y-%m-%d %H:%M:%S")
-                            if row["actual_time"]
-                            else "",
-                            "register": row["register"] if row["register"] is not None else "",
-                            "aircraft": row["aircraft"] if row["aircraft"] is not None else "",
-                            "airport": row["airport_name"] if row["airport_name"] is not None else "",
-                            "flight_type": flight_type_str,
-                        }
-                        all_flight_records.append(record)
-
-                with conn.cursor(cursor_factory=DictCursor) as cur_dep:
-                    cur_dep.execute("""
-                        SELECT
-                            d.scheduled_time, d.airline, d.flight_number, d.destination,
-                            d.status, d.counter, d.actual_time, d.register,
-                            d.aircraft, ap.name as airport_name, d.is_international
-                        FROM departures d
-                        LEFT JOIN airports ap ON d.airport_id = ap.id
-                    """)
-                    for row in cur_dep.fetchall():
-                        flight_type_str = "International Departure" if row["is_international"] else "Domestic Departure"
-                        record = {
-                            "scheduled_time": row["scheduled_time"].strftime("%Y-%m-%d %H:%M:%S")
-                            if row["scheduled_time"]
-                            else "",
-                            "airline": row["airline"] if row["airline"] is not None else "",
-                            "flight_number": row["flight_number"] if row["flight_number"] is not None else "",
-                            "destination_or_origin": row["destination"] if row["destination"] is not None else "",
-                            "status": row["status"] if row["status"] is not None else "",
-                            "counter": str(row["counter"]) if row["counter"] is not None else "",
-                            "actual_time": row["actual_time"].strftime("%Y-%m-%d %H:%M:%S")
-                            if row["actual_time"]
-                            else "",
-                            "register": row["register"] if row["register"] is not None else "",
-                            "aircraft": row["aircraft"] if row["aircraft"] is not None else "",
-                            "airport": row["airport_name"] if row["airport_name"] is not None else "",
-                            "flight_type": flight_type_str,
-                        }
-                        all_flight_records.append(record)
-
-            if not all_flight_records:
-                logging.info("No flight data found to export.")
-                df_export = pd.DataFrame(columns=csv_column_names)
-            else:
-                df_export = pd.DataFrame(all_flight_records, columns=csv_column_names)
-
-            df_export.to_csv(filepath, index=False, encoding="utf-8-sig")
-            logging.info(f"Successfully exported {len(all_flight_records)} flight records to {filepath}")
+            df = self.fetch_flights()
+            df.to_csv(filepath, index=False, encoding="utf-8-sig")
+            logging.info(f"Successfully exported {len(df)} flight records to {filepath}")
             return True
-
         except psycopg2.Error as db_err:
             logging.error(f"Database error during CSV export: {db_err}", exc_info=True)
             return False
         except OSError as io_err:
             logging.error(f"File I/O error during CSV export to {filepath}: {io_err}", exc_info=True)
-            return False
-        except Exception as e:
-            logging.error(f"An unexpected error occurred during CSV export: {e}", exc_info=True)
             return False

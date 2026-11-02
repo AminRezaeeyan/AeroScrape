@@ -54,3 +54,30 @@ def test_loading_the_same_flights_twice_does_not_duplicate() -> None:
     with db.get_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM departures WHERE flight_number IN ('TST010', 'TST011')")
         assert cur.fetchone()[0] == 2
+
+
+def test_fetch_flights_returns_the_scraped_format_for_a_time_window() -> None:
+    db = Database()
+    db.insert_flights_from_dataframe(
+        pd.DataFrame([_departure("TST020", scheduled_time="سه شنبه 07:00"), _departure("TST021")]),
+        base_date=datetime(2026, 11, 1),
+    )
+
+    window = db.fetch_flights(datetime(2026, 11, 3), datetime(2026, 11, 4))  # Tuesday only
+
+    tuesday = window[window["flight_number"].str.startswith("TST02")]
+    assert tuesday["flight_number"].tolist() == ["TST020"]
+    assert tuesday.iloc[0]["scheduled_time"] == "2026-11-03 07:00:00"
+    assert list(window.columns) == [
+        "scheduled_time",
+        "airline",
+        "flight_number",
+        "destination_or_origin",
+        "status",
+        "counter",
+        "actual_time",
+        "register",
+        "aircraft",
+        "airport",
+        "flight_type",
+    ]
