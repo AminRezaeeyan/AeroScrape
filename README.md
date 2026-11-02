@@ -8,28 +8,21 @@ _Screenshot of the Airflow DAG orchestrating the ML pipeline._
 
 ## Results
 
-Evaluated on a chronological split: trained on 2025-05-22 to 06-09, tested once on 06-10 to 06-12 (687 domestic departures from 26 airports). Brackets are 95% bootstrap intervals; the differences are paired against the best baseline. Full report in [docs/results/evaluation.md](docs/results/evaluation.md), regenerated with `make evaluate`.
+For each departure the model returns a **calibrated probability of a delay over 15 minutes** and a **likely delay range** (10th to 90th percentile, which contains about 8 in 10 flights). Two variants: one usable when the flight is booked, one an hour before departure, when the aircraft's previous delay is known.
 
-| Delay in minutes | MAE (min) | Change vs best baseline |
-| --- | --- | --- |
-| Global median (baseline) | 25.2 [21.7, 28.8] | |
-| Airline × time-of-day median (baseline) | 24.7 [21.4, 28.2] | |
-| LightGBM, at booking | 23.8 [20.4, 27.4] | -0.9 [-1.4, -0.4] |
-| LightGBM, 1 h before departure | 22.8 [19.6, 26.3] | -1.9 [-2.8, -1.2] |
+Evaluated on a chronological split: model choices from rolling-origin CV on 2025-05-22 to 06-09, tested once on 06-10 to 06-12 (687 domestic departures, 26 airports). Changes are paired 95% bootstrap intervals against the best baseline (airline delay rate; airline × time-of-day median or percentiles). Full report in [docs/results/evaluation.md](docs/results/evaluation.md), regenerated with `make evaluate`.
 
-| Delayed more than 15 min | Accuracy | PR-AUC | Brier |
-| --- | --- | --- | --- |
-| Always "delayed" (baseline) | 0.603 | 0.603 | 0.240 |
-| Airline delay rate (baseline) | 0.646 | 0.717 | 0.221 |
-| Logistic regression, at booking | 0.699 | 0.763 | 0.207 |
-| Logistic regression, 1 h before departure | 0.699 | 0.777 | 0.205 |
+| Model | MAE (min) | Change vs baseline | Range coverage (target 80%) | Brier | Change vs baseline |
+| --- | --- | --- | --- | --- | --- |
+| Best baseline | 24.7 | | 76.4% | 0.221 | |
+| At booking | 24.0 | -0.7 [-1.2, -0.3] | 82.7% | 0.207 | -0.014 [-0.023, -0.005] |
+| 1 h before departure | 23.0 | -1.7 [-2.6, -0.9] | 85.3% | 0.201 | -0.020 [-0.030, -0.011] |
 
-Every model now beats its best baseline with an interval that excludes zero. The gains are modest: about 2 minutes of MAE an hour before departure, mostly from two sources:
+Both variants beat the baselines on every metric, by modest margins. Most of the gain comes from recovering data the original cleaner discarded (training rows grew from 2,313 to 3,574) and from delay propagation: when the same aircraft's previous delay is known, the 1-hour model's error drops from 25.0 to 18.9 minutes. Aircraft registrations are only published at Mehrabad, so that applies to about a third of flights. The "likely delayed" flag is set for 75% precision and reaches 80-85% on test.
 
-- **Recovered data.** The cleaner used to keep only one spelling of "departed", which discarded 35% of departures and every airport except Mehrabad and Mashhad. Training rows grew from 2,313 to 3,574.
-- **Delay propagation.** The same aircraft's previous departure delay, known an hour before departure, is the strongest feature. Aircraft registrations are only published at Mehrabad, so it is available for about a third of flights.
+![Reliability on test](docs/results/reliability.png)
 
-Schedule-based congestion and 7-day rate features added nothing measurable; see the ablation in [docs/features.md](docs/features.md). The first version of this project reported better-looking numbers from a random split and tuned on the test set; with an honest evaluation and the original features, the models did not beat these baselines.
+How the outputs are produced, calibrated and checked, including error analysis by segment: [docs/modeling.md](docs/modeling.md). Features and the ablation: [docs/features.md](docs/features.md). The first version of this project reported better-looking numbers from a random split and tuned on the test set; with an honest evaluation and the original features, it did not beat these baselines.
 
 ## Table of Contents
 

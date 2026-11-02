@@ -8,8 +8,10 @@ A prediction is only useful before the flight, so every feature is restricted to
 
 | Variant | Prediction time | Groups |
 | --- | --- | --- |
-| `booking` | when the flight is booked | calendar, identity, rotation, congestion, rates |
+| `booking` | when the flight is booked | calendar, identity, rotation, rates |
 | `pre_departure` | 1 hour before departure (`prediction_lead_minutes`) | the above + live propagation |
+
+Congestion is computed and kept in the ablation, but left out of both variants. The counts come from what was scraped, not from a full schedule, and scraped departures per day varied from 277 to 688 depending on how often the scraper ran, while training rows stayed near 240 a day. The count correlates 0.70 with the day's delay share, so it measures scraping effort rather than traffic, and a model using it (the LightGBM classifier ranked it first) would not carry over to live scraping.
 
 The API serves `booking` for now (`features.served_variant`), because it can't yet look up other flights at request time (Phase 4).
 
