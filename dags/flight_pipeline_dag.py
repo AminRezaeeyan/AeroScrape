@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from airflow import DAG
+from airflow.exceptions import AirflowFailException
 from airflow.models.param import Param
 from airflow.operators.python import PythonOperator
 
@@ -13,6 +14,11 @@ from aeroscrape.pipeline.tasks import (
     task_tune_hyperparameters,
     task_validate_raw_data,
 )
+
+
+def fail_run():
+    raise AirflowFailException("An upstream task failed; see its logs.")
+
 
 # Define default arguments for the DAG
 default_args = {
@@ -88,3 +94,12 @@ with DAG(
     validate_op >> clean_data_op >> split_op >> tune_op >> train_evaluate_op
     clean_data_op >> association_mining_op
     [train_evaluate_op, association_mining_op] >> cleanup_op
+
+    # Cleanup runs even after a failure and is a leaf, so without this the run would be marked
+    # successful when training fails. The watcher runs only if something failed, and fails itself.
+    watcher_op = PythonOperator(
+        task_id="watcher",
+        python_callable=fail_run,
+        trigger_rule="one_failed",
+    )
+    [validate_op, clean_data_op, split_op, tune_op, train_evaluate_op, association_mining_op] >> watcher_op
