@@ -6,14 +6,20 @@ from pandera.errors import SchemaError
 
 logger = logging.getLogger(__name__)
 
+# Batch-level rules are strict: without these the rows are unusable or the page layout changed.
+# A single flight with an empty status or airline is normal on the boards; the loader skips such
+# rows with a counted reason. Only when many rows lack them does the whole batch fail.
+MAX_INCOMPLETE_SHARE = 0.05
+OPTIONAL_FIELDS = ["airline", "destination_or_origin", "status"]
+
 raw_data_schema = pa.DataFrameSchema(
     {
         "scheduled_time": pa.Column(pa.String, nullable=False),
         "actual_time": pa.Column(pa.String, nullable=True),
-        "airline": pa.Column(pa.String, nullable=False),
+        "airline": pa.Column(pa.String, nullable=True),
         "flight_number": pa.Column(pa.String, nullable=False),
-        "destination_or_origin": pa.Column(pa.String, nullable=False),
-        "status": pa.Column(pa.String, nullable=False),
+        "destination_or_origin": pa.Column(pa.String, nullable=True),
+        "status": pa.Column(pa.String, nullable=True),
         "flight_type": pa.Column(
             pa.String,
             pa.Check.isin(
@@ -21,6 +27,12 @@ raw_data_schema = pa.DataFrameSchema(
             ),
         ),
     },
+    checks=[
+        pa.Check(
+            lambda df: bool(df[OPTIONAL_FIELDS].isna().any(axis=1).mean() <= MAX_INCOMPLETE_SHARE),
+            error=f"more than {MAX_INCOMPLETE_SHARE:.0%} of rows lack airline, destination or status",
+        )
+    ],
     strict=False,
 )
 
