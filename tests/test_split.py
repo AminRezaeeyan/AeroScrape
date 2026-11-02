@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from aeroscrape.data.split import time_split
+from aeroscrape.data.split import recent_cut_dates, time_split
 
 
 @pytest.fixture
@@ -30,3 +30,16 @@ def test_empty_split_is_an_error(flights: pd.DataFrame) -> None:
 def test_cut_dates_must_be_ordered(flights: pd.DataFrame) -> None:
     with pytest.raises(ValueError, match="must be before"):
         time_split(flights, "scheduled_datetime", "2025-06-10", "2025-06-06")
+
+
+def test_recent_cut_dates_count_dates_with_data() -> None:
+    # Data on six dates with gaps; the last three are test and the two before validation
+    times = pd.Series(
+        pd.to_datetime(["2025-06-01", "2025-06-02", "2025-06-05", "2025-06-06", "2025-06-09", "2025-06-12"])
+    )
+    assert recent_cut_dates(times, test_dates=3, val_dates=2) == ("2025-06-02", "2025-06-06")
+
+
+def test_recent_cut_dates_need_enough_dates() -> None:
+    with pytest.raises(ValueError, match="Need more than"):
+        recent_cut_dates(pd.Series(pd.to_datetime(["2025-06-01", "2025-06-02"])), 3, 2)

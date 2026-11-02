@@ -88,6 +88,12 @@ data_paths:
   raw_data: "data/raw/data.csv"
   runs_dir: "data/runs/"   # each DAG run's intermediate files, removed by its cleanup task
 
+# Training data for the training DAG: the 2025 archive plus everything scraped into Postgres.
+# `make evaluate` uses the archive only, so the documented results stay reproducible.
+data_sources:
+  archive: "data/raw/data.csv"
+  database: true
+
 # Association Mining
 association_mining:
   min_support: 0.02
@@ -129,11 +135,17 @@ features:
   served_variant: "booking"           # the API can't look up live features until Phase 4
   ablation: [["calendar", "identity"], ["rotation"], ["congestion"], ["rates"], ["live_propagation"]]
 
+serving:
+  registry_poll_seconds: 120   # how often the API checks whether a new model was promoted
+
 # Evaluation: split by scheduled time, never at random, so the test set is the future
 evaluation:
   time_column: "scheduled_datetime"
-  train_end: "2025-06-06"   # train: scheduled before this date
-  val_end: "2025-06-10"     # val: [train_end, val_end); test: from val_end on
+  # Test is the last 3 dates with data and validation the 2 before, so the held-out window
+  # moves forward as new flights are scraped. On the 2025 archive this gives train before
+  # 2025-06-06, val 06-06 and 06-09, test 06-10 to 06-12. Set train_end and val_end to fix the dates.
+  test_dates: 3
+  val_dates: 2
   cv_splits: 4              # rolling-origin folds over train+val for tuning
   bootstrap_samples: 1000
   confidence_level: 0.95
@@ -144,6 +156,12 @@ pipeline:
   # One registered model: calibrated probability, delay range and threshold (models/delay_model.py)
   model_registry_name: "flight-delay-model"
   model_alias_for_api: "production"
+
+  # A new model is registered as "challenger" and replaces "production" only if every check passes
+  gate:
+    min_gate_rows: 200            # held-out flights needed to judge
+    max_brier_increase: 0.005     # how much worse calibration may get
+    coverage_range: [0.70, 0.90]  # acceptable share of flights inside the 10-90% range
   random_state: 42
   delay_threshold_minutes: 15
   model_output_dir: "models/"

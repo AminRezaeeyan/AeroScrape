@@ -62,3 +62,15 @@ def time_split(df: pd.DataFrame, time_column: str, train_end: str, val_end: str)
 
     logger.info("Time split:\n%s", splits.describe(time_column).to_string())
     return splits
+
+
+def recent_cut_dates(times: pd.Series, test_dates: int, val_dates: int) -> tuple[str, str]:
+    """Cut dates that put the last `test_dates` dates with data in test and the `val_dates` before in val.
+
+    Counting dates that have data, not calendar days, keeps the split sensible when scraping
+    skipped days, and lets the test window move forward as new flights are scraped.
+    """
+    dates = sorted(pd.to_datetime(times).dt.normalize().unique())
+    if len(dates) < test_dates + val_dates + 1:
+        raise ValueError(f"Need more than {test_dates + val_dates} dates with data, have {len(dates)}")
+    return str(dates[-(test_dates + val_dates)].date()), str(dates[-test_dates].date())

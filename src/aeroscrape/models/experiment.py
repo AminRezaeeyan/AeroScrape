@@ -35,7 +35,7 @@ from sklearn.pipeline import Pipeline
 
 from aeroscrape.config import get_app_config, resolve_path
 from aeroscrape.data.clean import CleaningAudit, clean_flights_file, read_flights
-from aeroscrape.data.split import Splits, time_split
+from aeroscrape.data.split import Splits, recent_cut_dates, time_split
 from aeroscrape.features.preprocess import (
     FeatureSet,
     ablation_steps,
@@ -130,8 +130,19 @@ class ExperimentResult:
 
 def make_splits(flights: pd.DataFrame, config: dict[str, Any], audit: CleaningAudit | None = None) -> Splits:
     frame = make_model_frame(flights, config, audit)
+    return time_split(
+        frame,
+        *split_cut_dates(frame, config),
+    )
+
+
+def split_cut_dates(frame: pd.DataFrame, config: dict[str, Any]) -> tuple[str, str, str]:
+    """(time column, train_end, val_end): fixed dates if configured, else the most recent dates with data."""
     eval_cfg = config["evaluation"]
-    return time_split(frame, eval_cfg["time_column"], eval_cfg["train_end"], eval_cfg["val_end"])
+    time_column = eval_cfg["time_column"]
+    if eval_cfg.get("train_end") and eval_cfg.get("val_end"):
+        return time_column, eval_cfg["train_end"], eval_cfg["val_end"]
+    return time_column, *recent_cut_dates(frame[time_column], eval_cfg["test_dates"], eval_cfg["val_dates"])
 
 
 def _targets(df: pd.DataFrame, config: dict[str, Any]) -> tuple[pd.Series, pd.Series]:
