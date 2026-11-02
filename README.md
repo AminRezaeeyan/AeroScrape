@@ -8,21 +8,28 @@ _Screenshot of the Airflow DAG orchestrating the ML pipeline._
 
 ## Results
 
-Evaluated on a chronological split: trained on 2025-05-22 to 06-09, tested once on 06-10 to 06-12 (442 departures from Mehrabad and Mashhad). Brackets are 95% bootstrap intervals; full report in [docs/results/evaluation.md](docs/results/evaluation.md), regenerated with `make evaluate`.
+Evaluated on a chronological split: trained on 2025-05-22 to 06-09, tested once on 06-10 to 06-12 (687 domestic departures from 26 airports). Brackets are 95% bootstrap intervals; the differences are paired against the best baseline. Full report in [docs/results/evaluation.md](docs/results/evaluation.md), regenerated with `make evaluate`.
 
-| Delay in minutes | MAE (min) |
-| --- | --- |
-| Global median (baseline) | 25.2 [20.9, 29.8] |
-| Airline × time-of-day median (baseline) | 24.6 [20.3, 29.3] |
-| LightGBM | 24.4 [20.2, 29.0] |
-
-| Delayed more than 15 min | Accuracy | Brier |
+| Delay in minutes | MAE (min) | Change vs best baseline |
 | --- | --- | --- |
-| Always "delayed" (baseline) | 0.679 | 0.219 |
-| Airline delay rate (baseline) | 0.704 | 0.202 |
-| Logistic regression | 0.697 | 0.202 |
+| Global median (baseline) | 25.2 [21.7, 28.8] | |
+| Airline × time-of-day median (baseline) | 24.7 [21.4, 28.2] | |
+| LightGBM, at booking | 23.8 [20.4, 27.4] | -0.9 [-1.4, -0.4] |
+| LightGBM, 1 h before departure | 22.8 [19.6, 26.3] | -1.9 [-2.8, -1.2] |
 
-**Neither model beats its best baseline yet.** The paired difference against the best baseline is -0.2 [-0.8, 0.2] minutes MAE for LightGBM and 0.000 [-0.008, 0.008] Brier for logistic regression; both intervals include zero. The current features are calendar fields and categories, which an airline-and-time-of-day average already captures. Earlier versions reported better-looking numbers from a random split and tuned on the test set.
+| Delayed more than 15 min | Accuracy | PR-AUC | Brier |
+| --- | --- | --- | --- |
+| Always "delayed" (baseline) | 0.603 | 0.603 | 0.240 |
+| Airline delay rate (baseline) | 0.646 | 0.717 | 0.221 |
+| Logistic regression, at booking | 0.699 | 0.763 | 0.207 |
+| Logistic regression, 1 h before departure | 0.699 | 0.777 | 0.205 |
+
+Every model now beats its best baseline with an interval that excludes zero. The gains are modest: about 2 minutes of MAE an hour before departure, mostly from two sources:
+
+- **Recovered data.** The cleaner used to keep only one spelling of "departed", which discarded 35% of departures and every airport except Mehrabad and Mashhad. Training rows grew from 2,313 to 3,574.
+- **Delay propagation.** The same aircraft's previous departure delay, known an hour before departure, is the strongest feature. Aircraft registrations are only published at Mehrabad, so it is available for about a third of flights.
+
+Schedule-based congestion and 7-day rate features added nothing measurable; see the ablation in [docs/features.md](docs/features.md). The first version of this project reported better-looking numbers from a random split and tuned on the test set; with an honest evaluation and the original features, the models did not beat these baselines.
 
 ## Table of Contents
 

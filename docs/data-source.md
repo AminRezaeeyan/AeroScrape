@@ -32,8 +32,11 @@ If a table has an unknown header or a row whose cell count doesn't match its hea
 | Weekday names vary in spacing | `دوشنبه` on the site, `دو شنبه` in older code | Weekdays are compared after removing spaces and zero-width non-joiners and unifying Arabic and Persian `ی`/`ک` |
 | Scheduled time has a weekday, not a date | `دوشنبه 06:20` | The date is the nearest matching weekday to the scrape date (from two days back to two days ahead) |
 | Actual time is time only | `06:35` | Placed on the flight's scheduled date; moved to the next day if it is more than 3 hours before the schedule |
-| The actual time cell can hold an estimate | CPN024: cell `07:10`, status `تخمین نشست 07:10 \| نشست07:15` | Not handled: the status text holds the real landing time. To fix with status parsing |
-| Status text embeds times and varies in spelling | `پروازکرد04:57`, older data `پرواز كرد` | Stored as-is. Normalization is planned (upgrade plan, Phase 2) |
+| The actual time cell can hold an estimate | CPN024: cell `07:10`, status `تخمین نشست 07:10 \| نشست07:15` | The cleaner takes the time from the status text (`نشست07:15`) and uses the cell only as a fallback, and only when the status says the flight departed or landed |
+| Status text embeds times and varies in spelling | `پروازکرد04:57`, older data `پرواز كرد` | Stored as-is in the database; the cleaner maps it to one of a few states (`FlightStatus` in `data/clean.py`). Before this, only `پرواز كرد` was kept, which dropped 1,261 departures and every airport except Mehrabad and Mashhad |
 | The date column disagrees with the weekday for some international flights | Monday flight dated `2026-11-04`; one cell reads `m 2026-11-04` | Not used. Domestic rows' dates match their weekday |
 | Airline cell can be a logo without text | `<img src=".../IRM.png">` | Falls back to the logo's airline code (`IRM`) |
 | The page shows a rolling window | about one day of flights per airport | Scraping only once a day misses flights and final statuses |
+| Registrations only at Mehrabad | 55% of Mehrabad departures, almost none elsewhere | Limits aircraft-rotation features; see [features.md](features.md) |
+| 2025 scrapes have no landing times at Mehrabad | status `نشست \| پایان دریافت بار` with no time | Inbound delay features are empty for the 2025 data |
+| The old scraper stored some dates a day off | `پروازکرد21:45` stored on the next day | The cleaner places event times on the day closest to the schedule and ignores the stored date |
