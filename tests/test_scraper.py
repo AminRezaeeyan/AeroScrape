@@ -1,25 +1,65 @@
+from pathlib import Path
+
+import pytest
 from bs4 import BeautifulSoup
 
-from aeroscrape.scraping.scraper import scrape_table
+from aeroscrape.scraping.scraper import LayoutChangedError, scrape_table
 
-COLUMNS = ["08:00", "ماهان", "IRM1070", "زاهدان", "پرواز كرد", "3", "08:20", "EPMEI", "RJ85"]
-
-
-def _page(rows: list[list[str]]) -> BeautifulSoup:
-    header = "<tr><th>header</th></tr>"
-    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>" for row in rows)
-    return BeautifulSoup(f'<div id="output"><table>{header}{body}</table></div>', "html.parser")
+FIDS_PAGE = Path(__file__).parent / "fixtures" / "fids_mashhad.html"
+AIRPORT = "فرودگاه مشهد"
 
 
-def test_scrape_table_maps_columns() -> None:
-    rows = scrape_table(_page([COLUMNS]), "output", "فرودگاه مهرآباد")
-
-    assert len(rows) == 1
-    assert rows[0]["flight_number"] == "IRM1070"
-    assert rows[0]["actual_time"] == "08:20"
-    assert rows[0]["airport"] == "فرودگاه مهرآباد"
-    assert rows[0]["flight_type"] == "Domestic Departure"
+@pytest.fixture
+def page() -> BeautifulSoup:
+    return BeautifulSoup(FIDS_PAGE.read_text(encoding="utf-8"), "html.parser")
 
 
-def test_scrape_table_returns_nothing_for_a_missing_table() -> None:
-    assert scrape_table(_page([COLUMNS]), "input", "فرودگاه مهرآباد") == []
+@pytest.mark.parametrize(
+    ("table_id", "flight_type", "rows"),
+    [
+        ("input", "Domestic Arrival", 3),
+        ("output", "Domestic Departure", 4),
+        ("internal", "International Arrival", 3),
+        ("external", "International Departure", 3),
+    ],
+)
+def test_every_table_type_is_parsed(page: BeautifulSoup, table_id: str, flight_type: str, rows: int) -> None:
+    flights = scrape_table(page, table_id, AIRPORT)
+
+    assert len(flights) == rows
+    assert {f["flight_type"] for f in flights} == {flight_type}
+    assert all(f["airport"] == AIRPORT and f["flight_number"] for f in flights)
+
+
+def test_columns_are_mapped_by_header(page: BeautifulSoup) -> None:
+    departure = scrape_table(page, "output", AIRPORT)[0]
+
+    assert departure["scheduled_time"] == "دوشنبه 06:20"
+    assert departure["airline"] == "ماهان"
+    assert departure["flight_number"] == "IRM1036"
+    assert departure["counter"] == "5-8"
+    assert departure["actual_time"] == "06:35"
+    assert departure["aircraft"] == "747-400"
+
+
+def test_international_departures_without_a_counter_column(page: BeautifulSoup) -> None:
+    departure = scrape_table(page, "external", AIRPORT)[0]
+
+    assert departure["flight_number"] == "MRJ4845"
+    assert departure["counter"] == ""
+    assert departure["actual_time"] == "09:12"
+
+
+def test_blank_airline_falls_back_to_logo_code(page: BeautifulSoup) -> None:
+    flights = {f["flight_number"]: f for f in scrape_table(page, "output", AIRPORT)}
+    assert flights["IRM9999"]["airline"] == "IRM"
+
+
+def test_missing_table_returns_nothing() -> None:
+    assert scrape_table(BeautifulSoup("<div id='other'></div>", "html.parser"), "output", AIRPORT) == []
+
+
+def test_unknown_header_raises(page: BeautifulSoup) -> None:
+    page.find("div", id="output").find("th", class_="airlineinfo").find("a").string = "something new"
+    with pytest.raises(LayoutChangedError, match="something new"):
+        scrape_table(page, "output", AIRPORT)
