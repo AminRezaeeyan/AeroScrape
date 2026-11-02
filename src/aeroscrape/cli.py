@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import sys
 from datetime import datetime
 
 from aeroscrape.config import get_app_config, resolve_path
@@ -21,13 +22,14 @@ def configure_logging() -> None:
     )
 
 
-def run_data_operations():
+def run_data_operations() -> int:
+    """Run the requested operation and return a process exit code."""
     try:
         get_app_config()
         logger.info("Application configuration successfully accessed.")
     except Exception as e:
         logger.critical(f"Fatal error during application startup due to configuration issues: {e}")
-        return  # Cannot proceed
+        return 1
 
     parser = argparse.ArgumentParser(description="Flight data scraper, importer, and exporter.")
     parser.add_argument(
@@ -48,7 +50,7 @@ def run_data_operations():
         db = Database()
         if not db.test_connection():
             logger.error("Failed to connect to the database. Please check connection parameters and DB status.")
-            return
+            return 1
 
         base_date = None
         if args.date:
@@ -57,7 +59,7 @@ def run_data_operations():
                 logger.info(f"Using provided base date: {base_date.strftime('%Y-%m-%d')}")
             except ValueError:
                 logger.error("Invalid date format for --date. Please use YYYY-MM-DD. Aborting.")
-                return
+                return 1
         else:
             base_date = datetime.now()
             logger.info(f"No --date provided. Using current date as base date: {base_date.strftime('%Y-%m-%d')}")
@@ -70,34 +72,40 @@ def run_data_operations():
             success = db.export_csv(args.export_csv_path)
             if success:
                 logger.info(f"Database content successfully exported to {args.export_csv_path}")
-            else:
-                logger.error(f"Failed to export database content to {args.export_csv_path}")
+                return 0
+            logger.error(f"Failed to export database content to {args.export_csv_path}")
+            return 1
 
         elif args.csv:
             logger.info(f"Attempting to import flights from CSV: {args.csv}")
             if not os.path.exists(args.csv):
                 logger.error(f"CSV file not found at path: {args.csv}. Aborting import.")
-                return
-            inserted_count = db.insert_flights_from_csv(args.csv, base_date=base_date)
-            logger.info(f"Successfully inserted/updated {inserted_count} flights from CSV file: {args.csv}")
+                return 1
+            result = db.insert_flights_from_csv(args.csv, base_date=base_date)
 
         else:  # Default behavior: scrape
             logger.info("Starting flight data scraping...")
             df = get_all_flights_data()
             if df is None or df.empty:
                 logger.warning("No flight data was scraped. Nothing to import.")
-                return
+                return 1
             logger.info(f"Successfully scraped {len(df)} flights.")
-            inserted_count = db.insert_flights_from_dataframe(df, base_date=base_date)
-            logger.info(f"Successfully inserted/updated {inserted_count} flights from scraping into the database.")
+            result = db.insert_flights_from_dataframe(df, base_date=base_date)
 
     except Exception as e:
         logger.error(f"An unexpected error occurred in CLI execution: {str(e)}", exc_info=True)
+        return 1
+
+    # Skipped rows are expected (e.g. a flight with no airline yet); rejected rows or an empty load are not
+    if result.failed or result.inserted == 0:
+        logger.error("Flight load failed: %s", result.summary())
+        return 1
+    return 0
 
 
 def main() -> None:
     configure_logging()
-    run_data_operations()
+    sys.exit(run_data_operations())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 import logging
 import re
-from datetime import datetime, timedelta
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import jdatetime
@@ -13,6 +15,67 @@ from aeroscrape.config import get_db_settings
 logger = logging.getLogger(__name__)
 
 PERSIAN_WEEKDAYS = ["شنبه", "یکشنبه", "دو شنبه", "سه شنبه", "چهارشنبه", "پنجشنبه", "جمعه"]
+
+# Weekday names appear with and without spaces or zero-width non-joiners ("دوشنبه", "دو شنبه",
+# "سه‌شنبه") and with Arabic or Persian forms of ی and ک, so compare them in a canonical form.
+_PERSIAN_CANONICAL = str.maketrans({"ي": "ی", "ك": "ک", "\u200c": None, " ": None})
+
+
+def _canonical_persian(text: str) -> str:
+    return text.translate(_PERSIAN_CANONICAL)
+
+
+_WEEKDAY_INDEX = {_canonical_persian(name): i for i, name in enumerate(PERSIAN_WEEKDAYS)}
+
+
+# Columns that are NOT NULL in both flight tables; "place" is origin for arrivals, destination for departures
+REQUIRED_FLIGHT_FIELDS = ("airline", "flight_number", "place", "status")
+
+_UPSERT_TEMPLATE = """
+    INSERT INTO {table} (
+        scheduled_time, airline, flight_number, {place},
+        status, counter, actual_time, register,
+        aircraft, airport_id, is_international
+    ) VALUES (
+        %(scheduled_time)s, %(airline)s, %(flight_number)s, %(place)s,
+        %(status)s, %(counter)s, %(actual_time)s, %(register)s,
+        %(aircraft)s, %(airport_id)s, %(is_international)s
+    )
+    ON CONFLICT (flight_number, scheduled_time, airport_id)
+    DO UPDATE SET
+        status = EXCLUDED.status,
+        counter = EXCLUDED.counter,
+        actual_time = EXCLUDED.actual_time,
+        register = EXCLUDED.register,
+        aircraft = EXCLUDED.aircraft,
+        is_international = EXCLUDED.is_international,
+        {place} = EXCLUDED.{place},
+        airline = EXCLUDED.airline
+"""
+UPSERT_SQL = {
+    "arrivals": _UPSERT_TEMPLATE.format(table="arrivals", place="origin"),
+    "departures": _UPSERT_TEMPLATE.format(table="departures", place="destination"),
+}
+
+
+def _clean(value: Any) -> str | None:
+    """Strip a cell value, mapping empty strings and NaN to None."""
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+@dataclass
+class InsertResult:
+    total: int = 0
+    inserted: int = 0
+    failed: int = 0
+    skipped: Counter[str] = field(default_factory=Counter)
+
+    def summary(self) -> str:
+        skipped = ", ".join(f"{reason}: {n}" for reason, n in self.skipped.most_common()) or "none"
+        return f"{self.inserted}/{self.total} upserted, {self.failed} rejected by the database, skipped ({skipped})"
 
 
 class Database:
@@ -67,10 +130,13 @@ class Database:
             if time_str_for_full_date:  # Only proceed if both date and a plausible separate time are found
                 try:
                     year, month, day = map(int, persian_date_str.split("-"))
-                    if not (1300 <= year <= 1500):
-                        raise ValueError("Persian year out of plausible range.")
-                    persian_date_obj = jdatetime.date(year, month, day)
-                    gregorian_date = persian_date_obj.togregorian()
+                    if 1300 <= year <= 1500:
+                        gregorian_date = jdatetime.date(year, month, day).togregorian()
+                    elif 1900 <= year <= 2100:
+                        # Already Gregorian, e.g. CSV files written by export_csv
+                        gregorian_date = date(year, month, day)
+                    else:
+                        raise ValueError("Year is neither a plausible Persian nor Gregorian year.")
 
                     clean_time_str = time_str_for_full_date.split("/")[0]
                     if clean_time_str.count(":") > 1:
@@ -89,17 +155,18 @@ class Database:
                     f"Found Persian date '{persian_date_str}' but no clear time in '{original_time_str}'. Trying weekday parsing."
                 )
 
-        sorted_persian_weekdays = sorted(PERSIAN_WEEKDAYS, key=len, reverse=True)
         parsed_weekday_from_str = None
+        persian_weekday_index_from_input = None
         remainder_str_after_weekday = original_time_str
 
-        for wd in sorted_persian_weekdays:
-            if original_time_str.startswith(wd):
-                parsed_weekday_from_str = wd
-                remainder_str_after_weekday = original_time_str[len(wd) :].strip()
-                break
+        leading_word = re.match(r"\s*(\D+?)\s*(?=\d)", original_time_str)
+        if leading_word:
+            persian_weekday_index_from_input = _WEEKDAY_INDEX.get(_canonical_persian(leading_word.group(1)))
+        if leading_word and persian_weekday_index_from_input is not None:
+            parsed_weekday_from_str = PERSIAN_WEEKDAYS[persian_weekday_index_from_input]
+            remainder_str_after_weekday = original_time_str[leading_word.end() :]
 
-        if parsed_weekday_from_str:
+        if parsed_weekday_from_str and persian_weekday_index_from_input is not None:
             time_match_after_weekday = re.search(r"(\d{1,2}:\d{1,2})", remainder_str_after_weekday)
             if time_match_after_weekday:
                 hh_mm_str = time_match_after_weekday.group(1)
@@ -109,8 +176,6 @@ class Database:
 
                     gregorian_weekday_of_ref_date = reference_gregorian_date.weekday()
                     persian_weekday_index_of_ref_date = (gregorian_weekday_of_ref_date + 2) % 7
-                    persian_weekday_index_from_input = PERSIAN_WEEKDAYS.index(parsed_weekday_from_str)
-
                     raw_days_difference = (persian_weekday_index_from_input - persian_weekday_index_of_ref_date + 7) % 7
 
                     target_days_offset = 0
@@ -181,216 +246,100 @@ class Database:
             )
             return None, None
 
-    def _get_or_create_airport(self, airport_name: str) -> int:
-        """Get or create airport and return its ID"""
-        if pd.isna(airport_name) or not airport_name:
-            airport_name = "Unknown"
-        elif not isinstance(airport_name, str):
-            airport_name = str(airport_name)
-        airport_name = airport_name.strip()
+    def _get_or_create_airport(self, cur, airport_name: str) -> int:
+        """Return the airport's ID, creating it inside the caller's transaction if needed."""
+        cur.execute("SELECT id FROM airports WHERE name = %s", (airport_name,))
+        result = cur.fetchone()
+        if result:
+            return result[0]
+        cur.execute("INSERT INTO airports (name) VALUES (%s) RETURNING id", (airport_name,))
+        return cur.fetchone()[0]
 
-        with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id FROM airports WHERE name = %s", (airport_name,))
-                result = cur.fetchone()
-                if result:
-                    return result[0]
+    def _prepare_flight(self, row: pd.Series, base_date: datetime | None) -> tuple[str, dict[str, Any]] | str:
+        """Turn a scraped or imported row into (table, values), or return why it must be skipped."""
+        scheduled_time_str = _clean(row.get("scheduled_time"))
+        actual_time_str = _clean(row.get("actual_time"))
 
-                cur.execute("INSERT INTO airports (name) VALUES (%s) RETURNING id", (airport_name,))
-                airport_id = cur.fetchone()[0]
-                return airport_id
+        scheduled_time, _ = (
+            self._parse_time_with_weekday(scheduled_time_str, base_date) if scheduled_time_str else (None, None)
+        )
+        # An HH:MM-only actual time belongs to the flight's own day, not the day it was scraped
+        actual_time, actual_time_date_source = (
+            self._parse_time_with_weekday(actual_time_str, scheduled_time or base_date)
+            if actual_time_str
+            else (None, None)
+        )
 
-    def insert_flights_from_dataframe(self, df: pd.DataFrame, base_date: datetime | None = None) -> int:
-        """Insert flight data from a pandas DataFrame into the database"""
-        inserted_count = 0
+        # ...unless it is far earlier than the schedule, which means it rolled past midnight
+        if (
+            scheduled_time
+            and actual_time
+            and actual_time_date_source == "time_only_fallback"
+            and actual_time < scheduled_time - timedelta(hours=3)
+        ):
+            actual_time += timedelta(days=1)
+
+        flight_type = str(row.get("flight_type", "")).lower()
+        is_arrival = "arrival" in flight_type
+        values = {
+            "scheduled_time": scheduled_time,
+            "airline": _clean(row.get("airline")),
+            "flight_number": _clean(row.get("flight_number")),
+            "place": _clean(row.get("origin" if is_arrival else "destination")),
+            "status": _clean(row.get("status")),
+            "counter": _clean(row.get("counter")),
+            "actual_time": actual_time,
+            "register": _clean(row.get("register")),
+            "aircraft": _clean(row.get("aircraft")),
+            "airport": _clean(row.get("airport")) or "Unknown Airport",
+            "is_international": "international" in flight_type,
+        }
+
+        if scheduled_time is None:
+            return "unparseable scheduled_time" if scheduled_time_str else "missing scheduled_time"
+        for name in REQUIRED_FLIGHT_FIELDS:
+            if not values[name]:
+                return f"missing {name}"
+        return ("arrivals" if is_arrival else "departures"), values
+
+    def insert_flights_from_dataframe(self, df: pd.DataFrame, base_date: datetime | None = None) -> InsertResult:
+        """Upsert flights from a DataFrame.
+
+        Each row runs in its own savepoint, so a row the database rejects is rolled
+        back alone instead of aborting the transaction for every row after it.
+        """
+        result = InsertResult(total=len(df))
+        airport_ids: dict[str, int] = {}
 
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 for _, row in df.iterrows():
+                    prepared = self._prepare_flight(row, base_date)
+                    if isinstance(prepared, str):
+                        result.skipped[prepared] += 1
+                        logger.debug("Skipping flight %s: %s", row.get("flight_number"), prepared)
+                        continue
+                    table, values = prepared
+
+                    cur.execute("SAVEPOINT flight_row")
                     try:
-                        airport_val = row.get("airport")
-                        airport_name_to_use = (
-                            str(airport_val).strip()
-                            if pd.notna(airport_val) and str(airport_val).strip()
-                            else "Unknown Airport"
+                        airport_id = airport_ids.get(values["airport"]) or self._get_or_create_airport(
+                            cur, values["airport"]
                         )
-                        airport_id = self._get_or_create_airport(airport_name_to_use)
-
-                        scheduled_time_str = (
-                            str(row.get("scheduled_time")).strip()
-                            if pd.notna(row.get("scheduled_time")) and str(row.get("scheduled_time")).strip()
-                            else None
-                        )
-                        actual_time_str = (
-                            str(row.get("actual_time")).strip()
-                            if pd.notna(row.get("actual_time")) and str(row.get("actual_time")).strip()
-                            else None
-                        )
-
-                        scheduled_time, _ = (
-                            self._parse_time_with_weekday(scheduled_time_str, base_date)
-                            if scheduled_time_str
-                            else (None, None)
-                        )
-                        actual_time, actual_time_date_source = (
-                            self._parse_time_with_weekday(actual_time_str, base_date)
-                            if actual_time_str
-                            else (None, None)
-                        )
-
-                        # --- Heuristic for actual_time adjustment if its date was from base_date fallback ---
-                        if scheduled_time and actual_time and actual_time_date_source == "time_only_fallback":
-                            # If actual_time's date was derived from base_date (because actual_time_str was HH:MM only)
-                            # and it's significantly earlier than scheduled_time, assume it's for the next day.
-                            if actual_time < (scheduled_time - timedelta(hours=3)):  # Threshold can be adjusted
-                                adjusted_actual_time = actual_time + timedelta(days=1)
-                                logging.info(
-                                    f"Adjusted actual_time for flight {row.get('flight_number', 'N/A')} (heuristic: time_only_fallback, next day): "
-                                    f"Original actual_str='{actual_time_str}', "
-                                    f"Scheduled='{scheduled_time.strftime('%Y-%m-%d %H:%M')}', "
-                                    f"Initial actual_parse='{actual_time.strftime('%Y-%m-%d %H:%M')}', "
-                                    f"Final actual='{adjusted_actual_time.strftime('%Y-%m-%d %H:%M')}'"
-                                )
-                                actual_time = adjusted_actual_time
-                        # --- End of actual_time adjustment heuristic ---
-
-                        if not scheduled_time:
-                            logging.warning(
-                                f"Could not parse scheduled_time '{row.get('scheduled_time')}' for flight {row.get('flight_number', 'N/A')}. Row will be inserted with NULL scheduled_time if DB allows."
-                            )
-
-                        flight_type_val = str(row.get("flight_type", "")).lower()
-                        is_arrival = "arrival" in flight_type_val
-                        is_international = "international" in flight_type_val
-
-                        airline = (
-                            str(row.get("airline")).strip()
-                            if pd.notna(row.get("airline")) and str(row.get("airline")).strip()
-                            else None
-                        )
-                        flight_number = (
-                            str(row.get("flight_number")).strip()
-                            if pd.notna(row.get("flight_number")) and str(row.get("flight_number")).strip()
-                            else None
-                        )
-                        origin_val = (
-                            str(row.get("origin")).strip()
-                            if pd.notna(row.get("origin")) and str(row.get("origin")).strip()
-                            else None
-                        )
-                        destination_val = (
-                            str(row.get("destination")).strip()
-                            if pd.notna(row.get("destination")) and str(row.get("destination")).strip()
-                            else None
-                        )
-                        status = (
-                            str(row.get("status")).strip()
-                            if pd.notna(row.get("status")) and str(row.get("status")).strip()
-                            else None
-                        )
-                        counter = (
-                            str(row.get("counter")).strip()
-                            if pd.notna(row.get("counter")) and str(row.get("counter")).strip()
-                            else None
-                        )
-                        register = (
-                            str(row.get("register")).strip()
-                            if pd.notna(row.get("register")) and str(row.get("register")).strip()
-                            else None
-                        )
-                        aircraft = (
-                            str(row.get("aircraft")).strip()
-                            if pd.notna(row.get("aircraft")) and str(row.get("aircraft")).strip()
-                            else None
-                        )
-
-                        if not flight_number or not airport_id:
-                            logging.error(
-                                f"Skipping flight due to missing key components: flight_number='{flight_number}', airport_id='{airport_id}' for row: {row.to_dict()}. Scheduled time was '{scheduled_time_str}' parsed to '{scheduled_time}'."
-                            )
-                            continue
-
-                        if is_arrival:
-                            cur.execute(
-                                """
-                                INSERT INTO arrivals (
-                                    scheduled_time, airline, flight_number, origin,
-                                    status, counter, actual_time, register,
-                                    aircraft, airport_id, is_international
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (flight_number, scheduled_time, airport_id)
-                                DO UPDATE SET
-                                    status = EXCLUDED.status,
-                                    counter = EXCLUDED.counter,
-                                    actual_time = EXCLUDED.actual_time,
-                                    register = EXCLUDED.register,
-                                    aircraft = EXCLUDED.aircraft,
-                                    is_international = EXCLUDED.is_international,
-                                    origin = EXCLUDED.origin,
-                                    airline = EXCLUDED.airline
-                            """,
-                                (
-                                    scheduled_time,
-                                    airline,
-                                    flight_number,
-                                    origin_val,
-                                    status,
-                                    counter,
-                                    actual_time,
-                                    register,
-                                    aircraft,
-                                    airport_id,
-                                    is_international,
-                                ),
-                            )
-                        else:
-                            cur.execute(
-                                """
-                                INSERT INTO departures (
-                                    scheduled_time, airline, flight_number, destination,
-                                    status, counter, actual_time, register,
-                                    aircraft, airport_id, is_international
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (flight_number, scheduled_time, airport_id)
-                                DO UPDATE SET
-                                    status = EXCLUDED.status,
-                                    counter = EXCLUDED.counter,
-                                    actual_time = EXCLUDED.actual_time,
-                                    register = EXCLUDED.register,
-                                    aircraft = EXCLUDED.aircraft,
-                                    is_international = EXCLUDED.is_international,
-                                    destination = EXCLUDED.destination,
-                                    airline = EXCLUDED.airline
-                            """,
-                                (
-                                    scheduled_time,
-                                    airline,
-                                    flight_number,
-                                    destination_val,
-                                    status,
-                                    counter,
-                                    actual_time,
-                                    register,
-                                    aircraft,
-                                    airport_id,
-                                    is_international,
-                                ),
-                            )
-                        inserted_count += 1
+                        cur.execute(UPSERT_SQL[table], {**values, "airport_id": airport_id})
+                        cur.execute("RELEASE SAVEPOINT flight_row")
                     except psycopg2.Error as db_err:
-                        logging.error(
-                            f"Database error inserting flight {row.get('flight_number', 'UNKNOWN')}: {db_err}. SQL was: {cur.query.decode() if cur.query else 'N/A'}"
-                        )
+                        cur.execute("ROLLBACK TO SAVEPOINT flight_row")
+                        result.failed += 1
+                        logger.error("Database rejected flight %s: %s", values["flight_number"], db_err)
                         continue
-                    except Exception as e:
-                        logging.error(
-                            f"General error inserting flight {row.get('flight_number', 'UNKNOWN')} (Row data: {row.to_dict()}): {str(e)}",
-                            exc_info=True,
-                        )
-                        continue
-        return inserted_count
+                    airport_ids[values["airport"]] = airport_id
+                    result.inserted += 1
 
-    def insert_flights_from_csv(self, csv_path: str, base_date: datetime | None = None) -> int:
+        logger.info("Flight upsert finished: %s", result.summary())
+        return result
+
+    def insert_flights_from_csv(self, csv_path: str, base_date: datetime | None = None) -> InsertResult:
         """Insert flight data from a CSV file into the database."""
         try:
             df = pd.read_csv(csv_path, dtype=str)
@@ -459,13 +408,13 @@ class Database:
 
         except FileNotFoundError:
             logging.error(f"CSV file not found at path: {csv_path}")
-            return 0
+            return InsertResult()
         except pd.errors.EmptyDataError:
             logging.error(f"CSV file is empty: {csv_path}")
-            return 0
+            return InsertResult()
         except Exception as e:
             logging.error(f"Error importing CSV file '{csv_path}': {str(e)}", exc_info=True)
-            return 0
+            return InsertResult()
 
     def _format_datetime_to_persian_weekday_time(self, dt_obj: datetime | None) -> str:
         """Helper function to format Gregorian datetime to 'Persian Weekday HH:MM' string."""
