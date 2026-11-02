@@ -7,10 +7,9 @@ from airflow.operators.python import PythonOperator
 from aeroscrape.pipeline.tasks import (
     task_clean_and_engineer_data,
     task_cleanup_processed_data,
-    task_preprocess_for_modeling,
     task_run_association_mining,
-    task_train_evaluate_classification,
-    task_train_evaluate_regression,
+    task_split_data,
+    task_train_and_evaluate,
     task_tune_hyperparameters,
     task_validate_raw_data,
 )
@@ -55,45 +54,37 @@ with DAG(
         python_callable=task_clean_and_engineer_data,
     )
 
-    # Task 3: Preprocess the cleaned data for modeling (split, scale, encode)
-    preprocess_op = PythonOperator(
-        task_id="preprocess_for_modeling_task",
-        python_callable=task_preprocess_for_modeling,
+    # Task 3: Split by scheduled time into train, validation and test
+    split_op = PythonOperator(
+        task_id="split_data_task",
+        python_callable=task_split_data,
     )
 
-    # Task 4: Tune hyperparameters for the models
+    # Task 4: Tune hyperparameters with rolling-origin CV on train+val (never test)
     tune_op = PythonOperator(
         task_id="tune_hyperparameters_task",
         python_callable=task_tune_hyperparameters,
     )
 
-    # Task 5a: Train and evaluate the regression model
-    train_eval_regression_op = PythonOperator(
-        task_id="train_evaluate_regression_task",
-        python_callable=task_train_evaluate_regression,
+    # Task 5: Train both models, compare them with baselines on test, register them
+    train_evaluate_op = PythonOperator(
+        task_id="train_and_evaluate_task",
+        python_callable=task_train_and_evaluate,
     )
 
-    # Task 5b: Train and evaluate the classification model
-    train_eval_classification_op = PythonOperator(
-        task_id="train_evaluate_classification_task",
-        python_callable=task_train_evaluate_classification,
-    )
-
-    # Task 5c: Run association Mining
+    # Task 6: Run association mining
     association_mining_op = PythonOperator(
         task_id="run_association_task",
         python_callable=task_run_association_mining,
     )
 
-    # Task 6: Clean up intermediate data files
+    # Task 7: Clean up intermediate data files
     cleanup_op = PythonOperator(
         task_id="cleanup_processed_data_task",
         python_callable=task_cleanup_processed_data,
         trigger_rule="all_done",
     )
 
-    # Define the task dependencies
-    validate_op >> clean_data_op >> preprocess_op >> tune_op
-    tune_op >> [train_eval_regression_op, train_eval_classification_op]
+    validate_op >> clean_data_op >> split_op >> tune_op >> train_evaluate_op
     clean_data_op >> association_mining_op
-    [train_eval_regression_op, train_eval_classification_op, association_mining_op] >> cleanup_op
+    [train_evaluate_op, association_mining_op] >> cleanup_op

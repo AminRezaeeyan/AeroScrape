@@ -3,7 +3,7 @@ DATA_SHA256 := 7b9ba6559b9813b8f1c306f4aab33d49c137e7d329d2d1fd3f54846ce7b5919f
 DATA_FILE := data/raw/data.csv
 DAG_ID := flight_delay_prediction_pipeline
 
-.PHONY: setup lint format test data train up down
+.PHONY: setup lint format test data evaluate train up down
 
 setup:  ## Install all dependencies from the lock file and the git hooks
 	uv sync --frozen --all-extras
@@ -25,6 +25,9 @@ data:  ## Download the raw dataset and verify its checksum
 	mkdir -p $(dir $(DATA_FILE))
 	curl -fsSL -o $(DATA_FILE) $(DATA_URL)
 	echo "$(DATA_SHA256)  $(DATA_FILE)" | sha256sum --check
+
+evaluate:  ## Tune, train and evaluate locally on a time split; writes reports/evaluation.md
+	uv run --frozen python -m aeroscrape.models.experiment
 
 train:  ## Trigger the training DAG (the stack must be running, see `make up`)
 	docker compose exec airflow-scheduler airflow dags unpause $(DAG_ID)

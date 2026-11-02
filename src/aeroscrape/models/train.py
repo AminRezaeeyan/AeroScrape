@@ -1,98 +1,29 @@
 import json
 import logging
 import os
+from typing import Any
 
 import joblib
 import lightgbm as lgb
-import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    mean_absolute_error,
-    mean_squared_error,
-    precision_score,
-    r2_score,
-    recall_score,
-    roc_auc_score,
-)
+from sklearn.pipeline import Pipeline
 
 from aeroscrape.config import get_app_config, resolve_path
+from aeroscrape.features.preprocess import build_preprocessor
 
 logger = logging.getLogger(__name__)
 
 
-def train_regression_model(X_train, y_train):
-    app_config = get_app_config()
-    lgbm_params = app_config["pipeline"]["lgbm_params"]
-    random_state = app_config["pipeline"]["random_state"]
-
-    logger.info("Training regression model (LightGBM)...")
-    model = lgb.LGBMRegressor(**lgbm_params, random_state=random_state)
-    model.fit(X_train, y_train)
-    logger.info("Regression model training complete.")
-    return model
+def build_regression_pipeline(pipeline_config: dict[str, Any], params: dict[str, Any]) -> Pipeline:
+    """Preprocessor + LightGBM regressor. Fitting the whole pipeline keeps the preprocessor
+    from ever seeing the rows a model is scored on, including inside CV folds."""
+    model = lgb.LGBMRegressor(**params, random_state=pipeline_config["random_state"])
+    return Pipeline([("preprocess", build_preprocessor(pipeline_config)), ("model", model)])
 
 
-def evaluate_regression_model(model, X_test, y_test):
-    app_config = get_app_config()
-    accuracy_tolerance_minutes = app_config["pipeline"]["delay_threshold_minutes"]
-
-    logger.info(f"Evaluating regression model. Accuracy tolerance: ±{accuracy_tolerance_minutes} minutes.")
-    predictions = model.predict(X_test)
-
-    mae = mean_absolute_error(y_test, predictions)
-    mse = mean_squared_error(y_test, predictions)
-    rmse = mse**0.5
-    r2 = r2_score(y_test, predictions)
-
-    y_test_np = np.array(y_test)
-    predictions_np = np.array(predictions)
-
-    correct_predictions = np.sum(np.abs(y_test_np - predictions_np) <= accuracy_tolerance_minutes)
-    custom_accuracy = correct_predictions / len(y_test_np) if len(y_test_np) > 0 else 0
-
-    metrics = {
-        "MAE": mae,
-        "MSE": mse,
-        "RMSE": rmse,
-        "R2_Score": r2,
-        f"Accuracy_within_{accuracy_tolerance_minutes}min": custom_accuracy,
-    }
-    logger.info(f"Regression Metrics: {metrics}")
-    return metrics, predictions
-
-
-def train_classification_model(X_train, y_train):
-    app_config = get_app_config()
-    logistic_params = app_config["pipeline"]["logistic_params"]
-    random_state = app_config["pipeline"]["random_state"]
-
-    logger.info("Training classification model (Logistic Regression)...")
-    model = LogisticRegression(**logistic_params, random_state=random_state)
-    model.fit(X_train, y_train)
-    logger.info("Classification model training complete.")
-    return model
-
-
-def evaluate_classification_model(model, X_test, y_test):
-    logger.info("Evaluating classification model...")
-    predictions = model.predict(X_test)
-    pred_proba = model.predict_proba(X_test)[:, 1]
-
-    accuracy = accuracy_score(y_test, predictions)
-    f1 = f1_score(y_test, predictions, zero_division=0)
-    precision = precision_score(y_test, predictions, zero_division=0)
-    recall = recall_score(y_test, predictions, zero_division=0)
-    try:
-        auc = roc_auc_score(y_test, pred_proba)
-    except ValueError:
-        auc = float("nan")
-        logger.warning("ROC AUC score could not be calculated (likely only one class in y_test).")
-
-    metrics = {"Accuracy": accuracy, "F1_Score": f1, "Precision": precision, "Recall": recall, "AUC": auc}
-    logger.info(f"Classification Metrics: {metrics}")
-    return metrics, predictions
+def build_classification_pipeline(pipeline_config: dict[str, Any], params: dict[str, Any]) -> Pipeline:
+    model = LogisticRegression(**params, random_state=pipeline_config["random_state"])
+    return Pipeline([("preprocess", build_preprocessor(pipeline_config)), ("model", model)])
 
 
 def save_model(model, model_name, subfolder=""):
