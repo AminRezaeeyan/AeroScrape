@@ -9,28 +9,36 @@ def _group_keys(X: pd.DataFrame, columns: list[str]) -> pd.Series:
     return X[columns].astype(str).agg("|".join, axis=1)
 
 
-class GroupMedianRegressor(RegressorMixin, BaseEstimator):
-    """Predict the training median delay of the row's group, or the global median for unseen groups.
+class GroupQuantileRegressor(RegressorMixin, BaseEstimator):
+    """Predict a training quantile of the row's group, or the global quantile for unseen groups.
 
-    With `group_columns=[]` this is the global-median baseline.
+    With `group_columns=[]` this is a global baseline, e.g. the global median for quantile 0.5.
     """
 
-    def __init__(self, group_columns: list[str] | None = None):
+    def __init__(self, group_columns: list[str] | None = None, quantile: float = 0.5):
         self.group_columns = group_columns
+        self.quantile = quantile
 
-    def fit(self, X: pd.DataFrame, y) -> "GroupMedianRegressor":
+    def fit(self, X: pd.DataFrame, y) -> "GroupQuantileRegressor":
         y = pd.Series(np.asarray(y, dtype=float), index=X.index)
-        self.global_median_ = float(y.median())
+        self.global_value_ = float(y.quantile(self.quantile))
         columns = list(self.group_columns or [])
-        self.group_medians_ = y.groupby(_group_keys(X, columns)).median().to_dict() if columns else {}
+        self.group_values_ = y.groupby(_group_keys(X, columns)).quantile(self.quantile).to_dict() if columns else {}
         return self
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         columns = list(self.group_columns or [])
         if not columns:
-            return np.full(len(X), self.global_median_)
+            return np.full(len(X), self.global_value_)
         keys = _group_keys(X, columns)
-        return keys.map(self.group_medians_).fillna(self.global_median_).to_numpy(dtype=float)
+        return keys.map(self.group_values_).fillna(self.global_value_).to_numpy(dtype=float)
+
+
+class GroupMedianRegressor(GroupQuantileRegressor):
+    """The group median; see GroupQuantileRegressor."""
+
+    def __init__(self, group_columns: list[str] | None = None):
+        super().__init__(group_columns, quantile=0.5)
 
 
 class GroupRateClassifier(ClassifierMixin, BaseEstimator):

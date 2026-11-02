@@ -1,7 +1,6 @@
 import os
 from datetime import datetime
 
-import pandas as pd
 import requests
 import streamlit as st
 
@@ -45,63 +44,54 @@ if submit_btn:
     }
 
     try:
-        with st.spinner("Calculating delay prediction and feature impact (SHAP)..."):
-            response = requests.post(BACKEND_URL, json=payload)
+        with st.spinner("Predicting..."):
+            response = requests.post(BACKEND_URL, json=payload, timeout=30)
 
         if response.status_code == 200:
             result = response.json()
-            delay = result["predicted_delay_minutes"]
-            is_delayed = result["is_delayed"]
-            explainability = result.get("explainability", [])
+            probability = result["p_delay_over_15"]
+            delay = result["delay_minutes"]
 
-            st.success("Analysis Complete!")
-
-            # 1. Main prediction display
-            if is_delayed:
-                st.error(f"Predicted Delay: {delay:.2f} minutes")
-            else:
-                st.success(f"On Time! Predicted Delay: {delay:.2f} minutes")
-
-            # 2. SHAP Explainability Display
-            if explainability:
-                st.subheader("Why did the model make this prediction? (SHAP)")
-                st.write("Below are the top factors that impacted this specific estimation:")
-
-                pos_factors = [f for f in explainability if f["contribution"] > 0]
-                neg_factors = [f for f in explainability if f["contribution"] < 0]
-
-                exp_col1, exp_col2 = st.columns(2)
-
-                with exp_col1:
-                    st.markdown("**Factors Increasing Delay**")
-                    if pos_factors:
-                        for item in pos_factors[:5]:  # Show top 5
-                            st.write(f"- **{item['feature']}**: +{item['contribution']:.1f} mins")
-                    else:
-                        st.write("_No major delaying factors detected_")
-
-                with exp_col2:
-                    st.markdown("**Factors Reducing Delay**")
-                    if neg_factors:
-                        for item in neg_factors[:5]:  # Show top 5
-                            st.write(f"- **{item['feature']}**: {item['contribution']:.1f} mins")
-                    else:
-                        st.write("_No major reducing factors detected_")
-
-                # Optional: Render as a quick impact bar chart
-                st.markdown("---")
-                st.markdown("**Feature Impact Bar Chart**")
-                chart_data = (
-                    pd.DataFrame(explainability)
-                    .rename(columns={"feature": "Factor", "contribution": "Minutes Contribution"})
-                    .set_index("Factor")
+            col1, col2 = st.columns(2)
+            col1.metric("Chance of a delay over 15 min", f"{probability:.0%}")
+            col2.metric("Likely delay", f"{delay['p50']:.0f} min", help="Median prediction")
+            st.write(
+                f"Likely range: **{delay['p10']:.0f} to {delay['p90']:.0f} minutes** "
+                "(about 8 in 10 flights fall inside this range)."
+            )
+            if result["likely_delayed"]:
+                st.warning(
+                    f"Likely delayed: the probability is above the {result['decision_threshold']:.0%} threshold, "
+                    "where about 3 in 4 flagged flights are delayed."
                 )
-                st.bar_chart(chart_data)
 
+            factors = result.get("top_factors", [])
+            if factors:
+                st.subheader("What drove this prediction")
+                st.caption(
+                    f"Contributions in {result['explanation_units']}. Positive values raise the chance of a delay."
+                )
+                up = [f for f in factors if f["contribution"] > 0]
+                down = [f for f in factors if f["contribution"] < 0]
+                left, right = st.columns(2)
+                with left:
+                    st.markdown("**Raise the chance of a delay**")
+                    for item in up or []:
+                        st.write(f"- {item['feature']} = {item['value']} ({item['contribution']:+.2f})")
+                    if not up:
+                        st.write("_None_")
+                with right:
+                    st.markdown("**Lower the chance of a delay**")
+                    for item in down or []:
+                        st.write(f"- {item['feature']} = {item['value']} ({item['contribution']:+.2f})")
+                    if not down:
+                        st.write("_None_")
+
+            for warning in result.get("warnings", []):
+                st.info(warning)
+            st.caption(f"Model version {result.get('model_version')}")
         else:
             st.error(f"Backend API returned an error: {response.text}")
 
-    except requests.exceptions.ConnectionError:
-        st.error(
-            f"Could not connect to the Backend API at {BACKEND_URL}. Check if your Docker container stack is fully running."
-        )
+    except requests.exceptions.RequestException as e:
+        st.error(f"Could not reach the backend API at {BACKEND_URL}: {e}")

@@ -8,7 +8,7 @@ import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 
 from aeroscrape.data.clean import CleaningAudit, select_training_rows
 from aeroscrape.features.build import FeatureSettings, build_features
@@ -61,9 +61,27 @@ def make_model_frame(flights: pd.DataFrame, config: dict[str, Any], audit: Clean
     return frame
 
 
+def prepare_input(X: pd.DataFrame, features: FeatureSet) -> pd.DataFrame:
+    """The model's input columns with stable types: floats for numbers, strings for categories.
+
+    Training and serving both go through this, so a value arriving as JSON gets the same
+    type the model was fit on.
+    """
+    out = X.reindex(columns=features.columns)
+    for col in features.numerical:
+        out[col] = pd.to_numeric(out[col], errors="coerce").astype(float)
+    for col in features.categorical:
+        out[col] = out[col].astype(str)
+    return out
+
+
 def feature_coverage(frame: pd.DataFrame, features: FeatureSet) -> pd.Series:
     """Share of rows where each numerical feature is known."""
     return frame[list(features.numerical)].notna().mean()
+
+
+def _as_text(X: pd.DataFrame) -> pd.DataFrame:
+    return X.astype(str)
 
 
 def build_preprocessor(features: FeatureSet) -> ColumnTransformer:
@@ -74,10 +92,17 @@ def build_preprocessor(features: FeatureSet) -> ColumnTransformer:
             ("scale", StandardScaler()),
         ]
     )
+    categorical = Pipeline(
+        [
+            # Categories are compared as strings, so 1 and "1" (or a NaN read back from JSON) agree
+            ("as_text", FunctionTransformer(_as_text, feature_names_out="one-to-one")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ]
+    )
     return ColumnTransformer(
         transformers=[
             ("num", numerical, list(features.numerical)),
-            ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), list(features.categorical)),
+            ("cat", categorical, list(features.categorical)),
         ],
         remainder="drop",
     )

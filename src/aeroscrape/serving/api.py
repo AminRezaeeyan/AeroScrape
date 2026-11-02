@@ -1,98 +1,57 @@
 import logging
-import os
 from contextlib import asynccontextmanager
 
-import joblib
 import mlflow
-import mlflow.sklearn  # Updated: load native sklearn/lightgbm estimators
 import pandas as pd
-import shap
 from fastapi import FastAPI, HTTPException, status
+from mlflow import MlflowClient
 from pydantic import BaseModel
 
-from aeroscrape.config import get_app_config, resolve_path
+from aeroscrape.config import get_app_config
 from aeroscrape.data.clean import normalize_persian
 from aeroscrape.features.build import add_calendar_features
-from aeroscrape.features.preprocess import variant_feature_set
+from aeroscrape.models.delay_model import DelayModelBundle
 
 logger = logging.getLogger(__name__)
 
-model = None
-preprocessor = None
+model = None  # MLflow pyfunc: enforces the input signature
+bundle: DelayModelBundle | None = None  # the same model unwrapped, for explanations and metadata
+model_version: str | None = None
 app_config = None
-explainer = None  # Added: Global SHAP explainer object
+
+EXPLANATION_UNITS = "log-odds of a delay over 15 minutes, from the uncalibrated LightGBM classifier"
 
 
-def load_model_and_preprocessor():
-    """
-    Attempts to load the ML model from MLflow and the local preprocessor.
-    Sets global variables to None if they cannot be loaded.
-    """
-    global model, preprocessor, app_config, explainer
+def load_model():
+    """Load the registered delay model. Leaves the service unready if it can't be loaded."""
+    global model, bundle, model_version, app_config
 
     try:
         app_config = get_app_config()
-        mlflow_settings = app_config["mlflow"]
-        pipeline_settings = app_config["pipeline"]
-        mlflow_tracking_uri = mlflow_settings["tracking_uri"]
-        mlflow.set_tracking_uri(mlflow_tracking_uri)
-
-        # 1. Attempt to load native ML model from MLflow Registry
-        registered_model_name = pipeline_settings["model_registry_name_regression"]
-        model_alias = pipeline_settings["model_alias_for_api"]
-        model_uri = f"models:/{registered_model_name}@{model_alias}"
-
-        try:
-            # Loaded as a native sklearn/LGBM model to support SHAP TreeExplainer
-            model = mlflow.sklearn.load_model(model_uri)
-            logger.info(f"Native ML model '{registered_model_name}' loaded successfully.")
-
-            # Initialize global SHAP TreeExplainer
-            explainer = shap.TreeExplainer(model)
-            logger.info("SHAP TreeExplainer initialized successfully.")
-        except Exception as me:
-            logger.warning(f"Could not load ML model from registry: {me}. Prediction will be unavailable.")
-            model = None
-            explainer = None
-
-        # 2. Attempt to load preprocessor locally
-        preprocessor_local_path = os.path.join(
-            resolve_path(pipeline_settings["model_output_dir"]), pipeline_settings["preprocessor_filename"]
-        )
-        if os.path.exists(preprocessor_local_path):
-            try:
-                preprocessor = joblib.load(preprocessor_local_path)
-                logger.info(f"Preprocessor loaded successfully from {preprocessor_local_path}.")
-            except Exception as pe:
-                logger.warning(f"Could not load preprocessor from local path: {pe}. Prediction will be unavailable.")
-                preprocessor = None
-        else:
-            logger.warning(f"Preprocessor not found at {preprocessor_local_path}. Prediction will be unavailable.")
-            preprocessor = None
-
+        mlflow.set_tracking_uri(app_config["mlflow"]["tracking_uri"])
+        name = app_config["pipeline"]["model_registry_name"]
+        alias = app_config["pipeline"]["model_alias_for_api"]
+        model = mlflow.pyfunc.load_model(f"models:/{name}@{alias}")
+        bundle = model.unwrap_python_model().bundle
+        model_version = MlflowClient().get_model_version_by_alias(name, alias).version
+        logger.info("Loaded %s version %s (%s variant)", name, model_version, bundle.variant)
     except Exception as e:
-        logger.error(f"Error during component initialization: {e}", exc_info=True)
-        model = None
-        preprocessor = None
-        explainer = None
+        logger.warning("Could not load the delay model: %s. Prediction will be unavailable.", e)
+        model, bundle, model_version = None, None, None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Application startup: Initializing application components...")
-    load_model_and_preprocessor()
+    load_model()
     yield
-    logger.info("Application shutdown: Releasing resources.")
-    global model, preprocessor, explainer
-    model = None
-    preprocessor = None
-    explainer = None
+    global model, bundle
+    model, bundle = None, None
 
 
 app = FastAPI(
     title="Flight Delay Prediction API",
-    description="API to predict flight delay with explainable AI support.",
-    version="1.1.0",
+    description="Calibrated probability of a delay over 15 minutes and a likely delay range.",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -105,33 +64,35 @@ class FlightInput(BaseModel):
     scheduled_datetime: str
 
 
-# Added schemas for Explainability payload
+class DelayRange(BaseModel):
+    p10: float
+    p50: float
+    p90: float
+
+
 class FeatureContribution(BaseModel):
     feature: str
+    value: str
     contribution: float
 
 
 class PredictionOutput(BaseModel):
+    model_version: str | None
+    p_delay_over_15: float
+    likely_delayed: bool
+    decision_threshold: float
+    delay_minutes: DelayRange
+    top_factors: list[FeatureContribution]
+    explanation_units: str
+    warnings: list[str]
+    # Kept for clients of the previous response format
     predicted_delay_minutes: float
     is_delayed: bool
-    explainability: list[FeatureContribution]  # Added: list of top contributing features
 
 
-def clean_feature_name(name: str) -> str:
-    """Helper to translate internal one-hot feature names to human-readable text."""
-    name = name.replace("cat__", "").replace("num__", "")
-    name = name.replace("airline_", "Airline: ").replace("airport_", "Airport: ")
-    name = name.replace("scheduled_season_", "Season: ").replace("scheduled_time_of_day_", "Time of Day: ")
-    name = name.replace("scheduled_day_of_week_", "Day of Week: ")
-    return name.replace("_", " ").title()
-
-
-def create_features(data: FlightInput) -> pd.DataFrame:
-    if app_config is None:
-        raise RuntimeError("Application configuration not loaded.")
-
+def create_features(data: FlightInput, features: list[str]) -> tuple[pd.DataFrame, list[str]]:
+    """Build the model's input from one request. Returns the features and the ones that stay unknown."""
     df = pd.DataFrame([data.model_dump()])
-
     try:
         df["scheduled_datetime"] = pd.to_datetime(df["scheduled_datetime"], errors="raise")
     except Exception as e:
@@ -146,62 +107,41 @@ def create_features(data: FlightInput) -> pd.DataFrame:
         df[col] = df[col].map(normalize_persian)
     df = add_calendar_features(df)
 
-    # Features that need other flights (rotation, congestion, rates) can't be computed from
-    # one request yet; they stay missing and the model's imputer fills them. Phase 4 adds a
-    # feature lookup so the API builds them with the same code as training.
-    columns = variant_feature_set(app_config, app_config["features"]["served_variant"]).columns
-    missing = [col for col in columns if col not in df.columns]
-    if missing:
-        logger.info("Features without request-time data, left missing: %s", missing)
-    return df.reindex(columns=columns)
+    # Features that need other flights (rotation, rates, live delays) can't be computed from one
+    # request yet; they stay missing and the model's imputer fills them. Phase 4 adds a feature
+    # lookup so the API builds them with the same code as training.
+    missing = [col for col in features if col not in df.columns]
+    return df.reindex(columns=features), missing
 
 
 @app.post("/predict", response_model=PredictionOutput, status_code=status.HTTP_200_OK)
 async def predict(flight_data: FlightInput):
-    """
-    Predicts flight delay and calculates individual feature contributions using SHAP.
-    """
-    if model is None or preprocessor is None or app_config is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Model, preprocessor, or explainability systems are currently unavailable.",
-        )
+    if model is None or bundle is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model is not loaded.")
 
     try:
-        features_df = create_features(flight_data)
-        transformed_features = preprocessor.transform(features_df)
-
-        # 1. Run prediction
-        predicted_delay_minutes = float(model.predict(transformed_features)[0])
-        delay_threshold = app_config["pipeline"]["delay_threshold_minutes"]
-        is_delayed = predicted_delay_minutes > delay_threshold
-
-        # 2. Calculate SHAP Explainability
-        explainability_data = []
-        if explainer is not None:
-            try:
-                shap_values = explainer.shap_values(transformed_features)
-                # For LightGBM Regressor, shap_values is a 2D array: (n_samples, n_features)
-                single_shap_values = shap_values[0]
-
-                # Retrieve mapped feature column output names from preprocessor ColumnTransformer
-                feature_names = preprocessor.get_feature_names_out()
-
-                # Pair, clean names, and sort by absolute contribution
-                raw_contributions = []
-                for name, value in zip(feature_names, single_shap_values, strict=True):
-                    if abs(value) > 0.05:  # Filter out features with negligible contributions
-                        raw_contributions.append(
-                            FeatureContribution(feature=clean_feature_name(name), contribution=round(float(value), 3))
-                        )
-                explainability_data = sorted(raw_contributions, key=lambda x: abs(x.contribution), reverse=True)
-            except Exception as se:
-                logger.error(f"Error executing SHAP computation: {se}", exc_info=True)
-
+        features, missing = create_features(flight_data, bundle.features.columns)
+        X = bundle.prepare_input(features)
+        prediction = model.predict(X).iloc[0]
+        factors = bundle.explain(X, top=6)[0]
+        warnings = [f"Not computed from a single request, filled by the model: {', '.join(missing)}"] if missing else []
+        p50 = round(float(prediction["p50"]), 1)
+        likely = bool(prediction["likely_delayed"])
         return {
-            "predicted_delay_minutes": round(predicted_delay_minutes, 2),
-            "is_delayed": is_delayed,
-            "explainability": explainability_data,
+            "model_version": model_version,
+            "p_delay_over_15": round(float(prediction["p_delay_over_15"]), 3),
+            "likely_delayed": likely,
+            "decision_threshold": bundle.threshold,
+            "delay_minutes": {
+                "p10": round(float(prediction["p10"]), 1),
+                "p50": p50,
+                "p90": round(float(prediction["p90"]), 1),
+            },
+            "top_factors": factors,
+            "explanation_units": EXPLANATION_UNITS,
+            "warnings": warnings,
+            "predicted_delay_minutes": p50,
+            "is_delayed": likely,
         }
     except HTTPException:
         raise
@@ -212,20 +152,14 @@ async def predict(flight_data: FlightInput):
 
 @app.post("/reload", status_code=status.HTTP_200_OK)
 async def reload_assets():
-    logger.info("Manual reload triggered for model and preprocessor.")
-    load_model_and_preprocessor()
-    if model is not None and preprocessor is not None:
-        return {"status": "success", "message": "Model and preprocessor reloaded successfully."}
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Reload attempted but one or more components failed to load.",
-        )
+    load_model()
+    if model is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Reload failed; model not loaded.")
+    return {"status": "success", "model_version": model_version}
 
 
 @app.get("/health", status_code=status.HTTP_200_OK)
 async def health_check():
-    if model is not None and preprocessor is not None:
-        return {"status": "ok", "message": "Model and preprocessor loaded successfully."}
-    else:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model or preprocessor not loaded.")
+    if model is None or bundle is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model is not loaded.")
+    return {"status": "ok", "model_version": model_version, "variant": bundle.variant}

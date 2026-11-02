@@ -14,7 +14,11 @@ import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 
 from aeroscrape.features.preprocess import FeatureSet
-from aeroscrape.models.train import build_classification_pipeline, build_regression_pipeline
+from aeroscrape.models.train import (
+    build_classification_pipeline,
+    build_lgbm_classification_pipeline,
+    build_regression_pipeline,
+)
 
 logger = logging.getLogger(__name__)
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -80,6 +84,40 @@ def tune_classification_hyperparameters(
     study = _study(pipeline_config["random_state"], "minimize")
     study.optimize(objective, n_trials=n_trials, timeout=600)
     logger.info("Classification tuning: best CV Brier %.4f with %s", study.best_value, study.best_params)
+    return defaults | study.best_params, float(study.best_value)
+
+
+def tune_lgbm_classification_hyperparameters(
+    X: pd.DataFrame,
+    y: pd.Series,
+    pipeline_config: dict[str, Any],
+    features: FeatureSet,
+    n_trials: int,
+    cv_splits: int,
+) -> tuple[dict[str, Any], float]:
+    """Tune the LightGBM classifier for CV Brier score, including the positive-class weight.
+
+    About 60% of flights are delayed, so class weighting is searched rather than assumed;
+    any distortion it causes in the probabilities is undone by calibration afterwards.
+    """
+    defaults = dict(pipeline_config["lgbm_classifier_params"])
+    cv = TimeSeriesSplit(n_splits=cv_splits)
+
+    def objective(trial: optuna.Trial) -> float:
+        params = defaults | {
+            "n_estimators": trial.suggest_int("n_estimators", 100, 1000),
+            "learning_rate": trial.suggest_float("learning_rate", 1e-3, 0.1, log=True),
+            "num_leaves": trial.suggest_int("num_leaves", 8, 128),
+            "max_depth": trial.suggest_int("max_depth", 3, 12),
+            "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
+            "scale_pos_weight": trial.suggest_float("scale_pos_weight", 0.5, 2.0, log=True),
+        }
+        pipeline = build_lgbm_classification_pipeline(pipeline_config, params, features)
+        return -cross_val_score(pipeline, X, y, cv=cv, scoring="neg_brier_score").mean()
+
+    study = _study(pipeline_config["random_state"], "minimize")
+    study.optimize(objective, n_trials=n_trials, timeout=600)
+    logger.info("LightGBM classifier tuning: best CV Brier %.4f with %s", study.best_value, study.best_params)
     return defaults | study.best_params, float(study.best_value)
 
 

@@ -54,6 +54,47 @@ def _brier(y: np.ndarray, labels: np.ndarray, proba: np.ndarray) -> float:
     return float(brier_score_loss(y, proba))
 
 
+def _precision(y: np.ndarray, labels: np.ndarray, proba: np.ndarray) -> float:
+    predicted = labels == 1
+    return float(np.mean(y[predicted])) if predicted.any() else float("nan")
+
+
+def _recall(y: np.ndarray, labels: np.ndarray, proba: np.ndarray) -> float:
+    actual = y == 1
+    return float(np.mean(labels[actual] == 1)) if actual.any() else float("nan")
+
+
+def expected_calibration_error(y: np.ndarray, proba: np.ndarray, bins: int = 10) -> float:
+    """Average gap between predicted probability and observed rate, over equal-width bins, weighted by size."""
+    which = np.minimum((proba * bins).astype(int), bins - 1)
+    gaps = [abs(proba[which == b].mean() - y[which == b].mean()) * np.mean(which == b) for b in np.unique(which)]
+    return float(np.sum(gaps))
+
+
+def _ece(y: np.ndarray, labels: np.ndarray, proba: np.ndarray) -> float:
+    return expected_calibration_error(y, proba)
+
+
+QUANTILES = (0.1, 0.5, 0.9)
+
+
+def pinball_loss(y: np.ndarray, prediction: np.ndarray, quantile: float) -> float:
+    diff = y - prediction
+    return float(np.mean(np.maximum(quantile * diff, (quantile - 1) * diff)))
+
+
+def _mean_pinball(y: np.ndarray, low: np.ndarray, mid: np.ndarray, high: np.ndarray) -> float:
+    return float(np.mean([pinball_loss(y, q, tau) for q, tau in zip((low, mid, high), QUANTILES, strict=True)]))
+
+
+def _coverage(y: np.ndarray, low: np.ndarray, mid: np.ndarray, high: np.ndarray) -> float:
+    return float(np.mean((y >= low) & (y <= high)))
+
+
+def _width(y: np.ndarray, low: np.ndarray, mid: np.ndarray, high: np.ndarray) -> float:
+    return float(np.mean(high - low))
+
+
 REGRESSION_METRICS = (
     MetricSpec("MAE (min)", _mae, lower_is_better=True, fmt="{:.1f}"),
     MetricSpec("MedAE (min)", _medae, lower_is_better=True, fmt="{:.1f}"),
@@ -61,9 +102,22 @@ REGRESSION_METRICS = (
 )
 CLASSIFICATION_METRICS = (
     MetricSpec("Accuracy", _accuracy, lower_is_better=False, fmt="{:.3f}"),
+    MetricSpec("Precision", _precision, lower_is_better=False, fmt="{:.3f}"),
+    MetricSpec("Recall", _recall, lower_is_better=False, fmt="{:.3f}"),
     MetricSpec("PR-AUC", _pr_auc, lower_is_better=False, fmt="{:.3f}"),
     MetricSpec("Brier", _brier, lower_is_better=True, fmt="{:.3f}"),
+    MetricSpec("ECE", _ece, lower_is_better=True, fmt="{:.3f}"),
 )
+# Coverage has a target (the nominal 80%), not a direction; comparisons use pinball loss
+INTERVAL_METRICS = (
+    MetricSpec("Coverage of 10-90% interval", _coverage, lower_is_better=False, fmt="{:.1%}"),
+    MetricSpec("Mean width (min)", _width, lower_is_better=True, fmt="{:.1f}"),
+    MetricSpec("Pinball loss (min)", _mean_pinball, lower_is_better=True, fmt="{:.2f}"),
+)
+
+
+def metric(metrics: tuple[MetricSpec, ...], name: str) -> MetricSpec:
+    return next(m for m in metrics if m.name == name)
 
 
 @dataclass(frozen=True)
@@ -197,7 +251,7 @@ def evaluate_classification(
         y,
         {name: (np.asarray(labels), np.asarray(proba, dtype=float)) for name, (labels, proba) in predictions.items()},
         baselines,
-        (CLASSIFICATION_METRICS[2], CLASSIFICATION_METRICS[1]),
+        (metric(CLASSIFICATION_METRICS, "Brier"), metric(CLASSIFICATION_METRICS, "PR-AUC")),
         indices,
         confidence,
         notes=[
@@ -216,7 +270,8 @@ def ablation_markdown(regression: TaskReport, classification: TaskReport) -> str
                 return c.difference.format("{:+.1f}" if "min" in metric else "{:+.3f}")
         return "reference"
 
-    mae, brier, pr_auc = REGRESSION_METRICS[0], CLASSIFICATION_METRICS[2], CLASSIFICATION_METRICS[1]
+    mae = REGRESSION_METRICS[0]
+    brier, pr_auc = metric(CLASSIFICATION_METRICS, "Brier"), metric(CLASSIFICATION_METRICS, "PR-AUC")
     lines = [
         f"| Features | {mae.name} | Change in MAE | {brier.name} | Change in Brier | {pr_auc.name} |",
         "| --- | --- | --- | --- | --- | --- |",
@@ -228,6 +283,31 @@ def ablation_markdown(regression: TaskReport, classification: TaskReport) -> str
             f"| {classification.results[step][pr_auc.name].format(pr_auc.fmt)} |"
         )
     return "\n".join(lines)
+
+
+def evaluate_intervals(
+    y: np.ndarray,
+    predictions: Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
+    baselines: list[str],
+    indices: np.ndarray,
+    confidence: float,
+) -> TaskReport:
+    """Score (10th, 50th, 90th percentile) predictions; a calibrated interval covers about 80% of flights."""
+    y = np.asarray(y, dtype=float)
+    return _evaluate(
+        "Delay range: 10th to 90th percentile",
+        INTERVAL_METRICS,
+        y,
+        {name: tuple(np.asarray(q, dtype=float) for q in qs) for name, qs in predictions.items()},
+        baselines,
+        (metric(INTERVAL_METRICS, "Pinball loss (min)"),),
+        indices,
+        confidence,
+        notes=[
+            "A calibrated 10-90% interval contains about 80% of actual delays. Pinball loss scores all three "
+            "percentiles at once and rewards narrow intervals that still cover."
+        ],
+    )
 
 
 @dataclass

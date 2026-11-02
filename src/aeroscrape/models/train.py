@@ -5,6 +5,8 @@ from typing import Any
 
 import joblib
 import lightgbm as lgb
+import numpy as np
+from sklearn.compose import TransformedTargetRegressor
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
@@ -20,6 +22,59 @@ def build_regression_pipeline(
     """Preprocessor + LightGBM regressor. Fitting the whole pipeline keeps the preprocessor
     from ever seeing the rows a model is scored on, including inside CV folds."""
     model = lgb.LGBMRegressor(**params, random_state=pipeline_config["random_state"])
+    return Pipeline([("preprocess", build_preprocessor(features)), ("model", model)])
+
+
+# Delays are skewed (median ~20 min, max 537). Quantiles survive a monotone transform, but the
+# trees may fit the log scale better; the experiment picks the transform with the lower validation MAE.
+LOG_OFFSET = 61.0  # the cleaner keeps delays >= -60, so delay + 61 > 0
+CLIP_MINUTES = 300.0
+
+
+def log_delay(y):
+    return np.log(np.asarray(y, dtype=float) + LOG_OFFSET)
+
+
+def exp_delay(z):
+    return np.exp(np.asarray(z, dtype=float)) - LOG_OFFSET
+
+
+def clip_delay(y):
+    return np.minimum(np.asarray(y, dtype=float), CLIP_MINUTES)
+
+
+def identity(y):
+    return np.asarray(y, dtype=float)
+
+
+TARGET_TRANSFORMS = {
+    "none": None,
+    "log": (log_delay, exp_delay),
+    "clip_300": (clip_delay, identity),
+}
+
+
+def build_quantile_regressor(
+    pipeline_config: dict[str, Any],
+    params: dict[str, Any],
+    features: FeatureSet,
+    quantile: float,
+    transform: str = "none",
+):
+    """A LightGBM model of one delay quantile, optionally on a transformed target."""
+    quantile_params = params | {"objective": "quantile", "alpha": quantile, "metric": "quantile"}
+    pipeline = build_regression_pipeline(pipeline_config, quantile_params, features)
+    functions = TARGET_TRANSFORMS[transform]
+    if functions is None:
+        return pipeline
+    func, inverse = functions
+    return TransformedTargetRegressor(regressor=pipeline, func=func, inverse_func=inverse, check_inverse=False)
+
+
+def build_lgbm_classification_pipeline(
+    pipeline_config: dict[str, Any], params: dict[str, Any], features: FeatureSet
+) -> Pipeline:
+    model = lgb.LGBMClassifier(**params, random_state=pipeline_config["random_state"])
     return Pipeline([("preprocess", build_preprocessor(features)), ("model", model)])
 
 

@@ -2,7 +2,6 @@ import json
 import logging
 import os
 
-import joblib
 import mlflow
 import pandas as pd
 from mlflow import MlflowClient
@@ -13,8 +12,8 @@ from aeroscrape.config import project_root as _project_root
 from aeroscrape.data.clean import clean_flights_file, read_flights
 from aeroscrape.data.split import Splits
 from aeroscrape.data.validate import validate_raw_data
-from aeroscrape.models.experiment import TunedParams, make_splits, train_and_evaluate, tune_models
-from aeroscrape.models.train import save_metrics, save_model
+from aeroscrape.models.delay_model import log_delay_model
+from aeroscrape.models.experiment import TunedParams, make_splits, save_outputs, train_and_evaluate, tune_models
 from aeroscrape.models.tune import save_best_params
 
 logger = logging.getLogger(__name__)
@@ -137,51 +136,35 @@ def task_train_and_evaluate(**kwargs):
 
     result = train_and_evaluate(splits, params, app_config)
     report_md = result.report.to_markdown()
-    report_path = resolve_path(app_config["evaluation"]["report_path"])
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(report_md, encoding="utf-8")
-
-    # The API loads the bare estimator from the registry and this preprocessor from disk
-    preprocessor_path = os.path.join(
-        resolve_path(pipeline_cfg["model_output_dir"]), pipeline_cfg["preprocessor_filename"]
-    )
-    os.makedirs(os.path.dirname(preprocessor_path), exist_ok=True)
-    joblib.dump(result.regressor.named_steps["preprocess"], preprocessor_path)
-    regressor = result.regressor.named_steps["model"]
-    classifier = result.classifier.named_steps["model"]
+    save_outputs(result, resolve_path(app_config["evaluation"]["report_path"]))
+    bundle = result.served
 
     _start_mlflow(app_config)
     with mlflow.start_run(run_name="train_and_evaluate"):
+        # Log the model before the metrics: MLflow 3.1 links the run's existing metrics to a newly
+        # logged model and, on a SQLite store, fails with a unique-constraint error when there are many.
+        info = log_delay_model(
+            bundle,
+            example=splits.test.head(20),
+            registered_model_name=pipeline_cfg["model_registry_name"],
+        )
         mlflow.log_params(_flat_params(params))
-        mlflow.log_param("served_variant", result.served_variant)
         mlflow.log_params({f"split.{k}": app_config["evaluation"][k] for k in ("train_end", "val_end")})
+        mlflow.log_params({f"served.{k}": v for k, v in bundle.metadata.items() if k not in ("features", "trained_on")})
         mlflow.log_metrics(result.report.to_metrics())
         mlflow.log_text(report_md, "evaluation/report.md")
         mlflow.log_dict(result.report.to_dict(), "evaluation/report.json")
+        mlflow.log_dict(bundle.metadata, "evaluation/served_model.json")
+        for name, figure in result.figures.items():
+            mlflow.log_figure(figure, f"evaluation/{name}.png")
         mlflow.log_artifact(str(resolve_path("config.yaml")), artifact_path="config")
-        mlflow.log_artifact(preprocessor_path, artifact_path="preprocessor")
-
-        reg_info = mlflow.sklearn.log_model(
-            sk_model=regressor,
-            name="lgbm-regressor",
-            registered_model_name=pipeline_cfg["model_registry_name_regression"],
-        )
-        mlflow.sklearn.log_model(
-            sk_model=classifier,
-            name="logistic-classifier",
-            registered_model_name=pipeline_cfg["model_registry_name_classification"],
-        )
 
     # Every run still becomes the served model; a champion/challenger gate replaces this in Phase 5
     alias = pipeline_cfg.get("model_alias_for_api", "production")
-    MlflowClient().set_registered_model_alias(
-        pipeline_cfg["model_registry_name_regression"], alias, reg_info.registered_model_version
+    MlflowClient().set_registered_model_alias(pipeline_cfg["model_registry_name"], alias, info.registered_model_version)
+    logger.info(
+        "Set alias '%s' to %s version %s", alias, pipeline_cfg["model_registry_name"], info.registered_model_version
     )
-    logger.info("Set alias '%s' to regressor version %s", alias, reg_info.registered_model_version)
-
-    save_model(regressor, "lgbm_regressor", subfolder="regression")
-    save_model(classifier, "logistic_classifier", subfolder="classification")
-    save_metrics(result.report.to_metrics(), "evaluation", subfolder="")
 
 
 def task_run_association_mining():
