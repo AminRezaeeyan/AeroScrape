@@ -29,9 +29,10 @@ data:  ## Download the raw dataset and verify its checksum
 evaluate:  ## Tune, train and evaluate locally on a time split; writes reports/evaluation.md
 	uv run --frozen python -m aeroscrape.models.experiment
 
-train:  ## Trigger the training DAG (the stack must be running, see `make up`)
+train:  ## Trigger the training DAG with the current commit for lineage (the stack must be running)
 	docker compose exec airflow-scheduler airflow dags unpause $(DAG_ID)
-	docker compose exec airflow-scheduler airflow dags trigger $(DAG_ID)
+	docker compose exec airflow-scheduler airflow dags trigger $(DAG_ID) \
+		--conf '{"git_commit": "$(shell git rev-parse HEAD)", "git_dirty": "$(if $(shell git status --porcelain --untracked-files=no),true,false)"}'
 
 up:  ## Build and start the Docker stack
 	docker compose up -d --build

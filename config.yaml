@@ -86,20 +86,15 @@ scraper:
 # Data Paths (relative to project root)
 data_paths:
   raw_data: "data/raw/data.csv"
-  cleaned_data: "data/cleaned/cleaned_flight_data.csv"
-  processed_data_dir: "data/processed/"
-  best_params: "data/processed/best_params.json"
+  runs_dir: "data/runs/"   # each DAG run's intermediate files, removed by its cleanup task
 
 # Association Mining
 association_mining:
   min_support: 0.02
   min_threshold: 1
-  cleaned:
-    path: "data/"
-    filename: "cleaned_flight_data.csv"
   results:
     path: "data/mining/results"
-    association_rules_filename: "assiciation_rules.csv"
+    association_rules_filename: "association_rules.csv"
 
 # Features: computed in aeroscrape.features.build, grouped so models and the ablation
 # can be assembled from groups. Each group lists numerical and categorical columns.

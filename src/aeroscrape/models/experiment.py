@@ -55,6 +55,7 @@ from aeroscrape.models.evaluate import (
     evaluate_regression,
     expected_calibration_error,
 )
+from aeroscrape.models.lineage import collect_lineage, lineage_markdown
 from aeroscrape.models.plots import calibration_bins, importance_figure, reliability_figure
 from aeroscrape.models.train import (
     build_classification_pipeline,
@@ -329,7 +330,11 @@ def _fit_predict(
 
 
 def train_and_evaluate(
-    splits: Splits, params: TunedParams, config: dict[str, Any], audit: CleaningAudit | None = None
+    splits: Splits,
+    params: TunedParams,
+    config: dict[str, Any],
+    audit: CleaningAudit | None = None,
+    lineage: dict[str, str] | None = None,
 ) -> ExperimentResult:
     pipeline_cfg, eval_cfg = config["pipeline"], config["evaluation"]
     fit, test = splits.train_val, splits.test
@@ -384,6 +389,7 @@ def train_and_evaluate(
         *_coverage_section(splits, config),
         *_choices_section(fits, params),
         *_audit_section(audit),
+        *(lineage_markdown(lineage) if lineage else []),
     ]
     report = EvaluationReport(
         split_summary=splits.summary(eval_cfg["time_column"]),
@@ -410,6 +416,9 @@ def train_and_evaluate(
         "Accuracy, precision and recall here use a 0.5 cutoff for every model; the chosen decision "
         "threshold is evaluated in its own section below."
     )
+    if lineage:
+        for vf in fits.values():
+            vf.bundle.metadata["lineage"] = lineage
     return ExperimentResult(params, {v: f.bundle for v, f in fits.items()}, served, report, figures)
 
 
@@ -628,11 +637,25 @@ def _audit_section(audit: CleaningAudit | None) -> list[str]:
 
 
 def run_experiment(
-    flights: pd.DataFrame, config: dict[str, Any], tune: bool | None = None, audit: CleaningAudit | None = None
+    flights: pd.DataFrame,
+    config: dict[str, Any],
+    tune: bool | None = None,
+    audit: CleaningAudit | None = None,
+    raw_path: str | Path | None = None,
 ) -> ExperimentResult:
     splits = make_splits(flights, config, audit)
     params = tune_models(splits, config, enabled=tune)
-    return train_and_evaluate(splits, params, config, audit)
+    return train_and_evaluate(splits, params, config, audit, experiment_lineage(splits, config, raw_path))
+
+
+def experiment_lineage(splits: Splits, config: dict[str, Any], raw_path: str | Path | None) -> dict[str, str]:
+    """Lineage of a run; the feature list is the union of every variant's features."""
+    features = list(
+        dict.fromkeys(c for v in config["features"]["variants"] for c in variant_feature_set(config, v).columns)
+    )
+    pipeline_cfg = config["pipeline"]
+    targets = [pipeline_cfg["target_regression"], pipeline_cfg["target_classification"]]
+    return collect_lineage(raw_path, splits, features, config["evaluation"]["time_column"], targets)
 
 
 def save_outputs(result: ExperimentResult, report_path: Path) -> None:
@@ -661,7 +684,7 @@ def main() -> None:
         audit.steps = clean_flights_file(resolve_path(args.raw), cleaned_path).steps[:3]
         flights = read_flights(cleaned_path)
 
-    result = run_experiment(flights, config, tune=args.tune, audit=audit)
+    result = run_experiment(flights, config, tune=args.tune, audit=audit, raw_path=resolve_path(args.raw))
     output = resolve_path(args.output)
     save_outputs(result, output)
     print(result.report.to_markdown())

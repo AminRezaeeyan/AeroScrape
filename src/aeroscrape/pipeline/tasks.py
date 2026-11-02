@@ -1,6 +1,16 @@
+"""Airflow task callables for the training DAG.
+
+Each DAG run works in its own directory, data/runs/<run_id>/, and tasks pass only file
+paths through XCom. Two runs never overwrite each other's files, and a failed run's
+inputs stay on disk for debugging until cleanup removes them.
+"""
+
 import json
 import logging
 import os
+import re
+import shutil
+from pathlib import Path
 
 import mlflow
 import pandas as pd
@@ -8,64 +18,43 @@ from mlflow import MlflowClient
 
 from aeroscrape.analysis.association import find_association_rules
 from aeroscrape.config import get_app_config, resolve_path
-from aeroscrape.config import project_root as _project_root
 from aeroscrape.data.clean import clean_flights_file, read_flights
 from aeroscrape.data.split import Splits
 from aeroscrape.data.validate import validate_raw_data
 from aeroscrape.models.delay_model import log_delay_model
-from aeroscrape.models.experiment import TunedParams, make_splits, save_outputs, train_and_evaluate, tune_models
+from aeroscrape.models.experiment import (
+    TunedParams,
+    experiment_lineage,
+    make_splits,
+    save_outputs,
+    train_and_evaluate,
+    tune_models,
+)
 from aeroscrape.models.tune import save_best_params
 
 logger = logging.getLogger(__name__)
 
-
-def get_project_root():
-    return str(_project_root())
-
-
-def task_validate_raw_data(**kwargs):
-    logger.info("Starting task: Validate Raw Data")
-    project_root = get_project_root()
-    app_config = get_app_config()
-
-    raw_data_path_override = kwargs["params"].get("raw_data_path_override")
-    if raw_data_path_override:
-        raw_data_path = os.path.join(project_root, raw_data_path_override)
-        logger.info(f"Using overridden raw_data_path from DAG params: {raw_data_path}")
-    else:
-        raw_data_path = os.path.join(project_root, app_config["data_paths"]["raw_data"])
-        logger.info(f"Using raw_data_path from config: {raw_data_path}")
-
-    validate_raw_data(raw_data_path)
-    logger.info("Raw data validation task completed successfully.")
-
-
-def task_clean_and_engineer_data(**kwargs):
-    logger.info("Starting task: Clean and Engineer Data")
-    project_root = get_project_root()
-    app_config = get_app_config()
-
-    raw_data_path_override = kwargs["params"].get("raw_data_path_override")
-    if raw_data_path_override:
-        raw_data_path = os.path.join(project_root, raw_data_path_override)
-        logger.info(f"Using overridden raw_data_path from DAG params for cleaning: {raw_data_path}")
-    else:
-        raw_data_path = os.path.join(project_root, app_config["data_paths"]["raw_data"])
-        logger.info(f"Using raw_data_path from config for cleaning: {raw_data_path}")
-
-    cleaned_data_path = os.path.join(project_root, app_config["data_paths"]["cleaned_data"])
-    os.makedirs(os.path.dirname(cleaned_data_path), exist_ok=True)
-
-    audit = clean_flights_file(raw_data_path, cleaned_data_path)
-    logger.info("Cleaning audit:\n%s", audit.to_markdown())
-    logger.info("Data cleaning and feature engineering complete.")
-
-
 SPLIT_NAMES = ("train", "val", "test")
 
 
-def _splits_dir(app_config) -> str:
-    return os.path.join(resolve_path(app_config["data_paths"]["processed_data_dir"]), "splits")
+def _raw_data_path(kwargs) -> Path:
+    override = kwargs["params"].get("raw_data_path_override")
+    return resolve_path(override or get_app_config()["data_paths"]["raw_data"])
+
+
+def _run_dir(kwargs) -> Path:
+    safe_run_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", kwargs["run_id"])
+    path = resolve_path(get_app_config()["data_paths"]["runs_dir"]) / safe_run_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _git_from_conf(kwargs) -> None:
+    """`make train` passes the commit in the run's conf, since containers have no .git directory."""
+    conf = kwargs["dag_run"].conf or {}
+    if conf.get("git_commit"):
+        os.environ["GIT_COMMIT"] = str(conf["git_commit"])
+        os.environ["GIT_DIRTY"] = str(conf.get("git_dirty", "unknown"))
 
 
 def _load_splits(paths: dict[str, str]) -> Splits:
@@ -86,18 +75,33 @@ def _flat_params(params: TunedParams) -> dict[str, object]:
     }
 
 
+def task_validate_raw_data(**kwargs):
+    raw_path = _raw_data_path(kwargs)
+    logger.info("Validating %s", raw_path)
+    validate_raw_data(raw_path)
+
+
+def task_clean_and_engineer_data(**kwargs):
+    raw_path = _raw_data_path(kwargs)
+    cleaned_path = _run_dir(kwargs) / "cleaned.csv"
+    audit = clean_flights_file(raw_path, cleaned_path)
+    logger.info("Cleaning audit:\n%s", audit.to_markdown())
+    kwargs["ti"].xcom_push(key="cleaned_path", value=str(cleaned_path))
+
+
 def task_split_data(**kwargs):
     """Split cleaned flights by scheduled time and store each split as Parquet."""
+    ti = kwargs["ti"]
     app_config = get_app_config()
-    flights = read_flights(resolve_path(app_config["data_paths"]["cleaned_data"]))
+    flights = read_flights(ti.xcom_pull(task_ids="clean_and_engineer_data_task", key="cleaned_path"))
     splits = make_splits(flights, app_config)
 
-    out_dir = _splits_dir(app_config)
-    os.makedirs(out_dir, exist_ok=True)
-    paths = {name: os.path.join(out_dir, f"{name}.parquet") for name in SPLIT_NAMES}
+    out_dir = _run_dir(kwargs) / "splits"
+    out_dir.mkdir(exist_ok=True)
+    paths = {name: str(out_dir / f"{name}.parquet") for name in SPLIT_NAMES}
     for name in SPLIT_NAMES:
         getattr(splits, name).to_parquet(paths[name], index=False)
-    kwargs["ti"].xcom_push(key="split_paths", value=paths)
+    ti.xcom_push(key="split_paths", value=paths)
 
 
 def task_tune_hyperparameters(**kwargs):
@@ -108,11 +112,12 @@ def task_tune_hyperparameters(**kwargs):
     train_val = Splits(train=pd.read_parquet(paths["train"]), val=pd.read_parquet(paths["val"]), test=pd.DataFrame())
     params = tune_models(train_val, app_config)
 
-    params_path = str(resolve_path(app_config["data_paths"]["best_params"]))
+    params_path = str(_run_dir(kwargs) / "best_params.json")
     save_best_params(params.to_dict(), params_path)
 
     _start_mlflow(app_config)
     with mlflow.start_run(run_name="hyperparameter_tuning"):
+        mlflow.set_tag("airflow_run_id", kwargs["run_id"])
         mlflow.log_params(_flat_params(params))
         mlflow.log_metrics(
             {
@@ -126,17 +131,19 @@ def task_tune_hyperparameters(**kwargs):
 
 
 def task_train_and_evaluate(**kwargs):
-    """Fit both models on train+val, compare them with baselines on test, and register them."""
+    """Fit, calibrate and evaluate both variants, then log and register the served model."""
     ti = kwargs["ti"]
+    _git_from_conf(kwargs)
     app_config = get_app_config()
     pipeline_cfg = app_config["pipeline"]
     splits = _load_splits(ti.xcom_pull(task_ids="split_data_task", key="split_paths"))
     with open(ti.xcom_pull(task_ids="tune_hyperparameters_task", key="best_params_path")) as f:
         params = TunedParams.from_dict(json.load(f))
 
-    result = train_and_evaluate(splits, params, app_config)
+    lineage = experiment_lineage(splits, app_config, _raw_data_path(kwargs))
+    result = train_and_evaluate(splits, params, app_config, lineage=lineage)
     report_md = result.report.to_markdown()
-    save_outputs(result, resolve_path(app_config["evaluation"]["report_path"]))
+    save_outputs(result, _run_dir(kwargs) / "report" / "evaluation.md")
     bundle = result.served
 
     _start_mlflow(app_config)
@@ -148,9 +155,12 @@ def task_train_and_evaluate(**kwargs):
             example=splits.test.head(20),
             registered_model_name=pipeline_cfg["model_registry_name"],
         )
+        mlflow.set_tags(lineage | {"airflow_run_id": kwargs["run_id"], "served_variant": bundle.variant})
         mlflow.log_params(_flat_params(params))
         mlflow.log_params({f"split.{k}": app_config["evaluation"][k] for k in ("train_end", "val_end")})
-        mlflow.log_params({f"served.{k}": v for k, v in bundle.metadata.items() if k not in ("features", "trained_on")})
+        mlflow.log_params(
+            {f"served.{k}": v for k, v in bundle.metadata.items() if k not in ("features", "trained_on", "lineage")}
+        )
         mlflow.log_metrics(result.report.to_metrics())
         mlflow.log_text(report_md, "evaluation/report.md")
         mlflow.log_dict(result.report.to_dict(), "evaluation/report.json")
@@ -159,44 +169,39 @@ def task_train_and_evaluate(**kwargs):
             mlflow.log_figure(figure, f"evaluation/{name}.png")
         mlflow.log_artifact(str(resolve_path("config.yaml")), artifact_path="config")
 
+    # The registered version carries the lineage too, so it is visible from the registry
+    client = MlflowClient()
+    for key in ("git_commit", "git_dirty", "training_data_sha256", "training_from", "training_to"):
+        client.set_model_version_tag(
+            pipeline_cfg["model_registry_name"], info.registered_model_version, key, lineage[key]
+        )
+
     # Every run still becomes the served model; a champion/challenger gate replaces this in Phase 5
     alias = pipeline_cfg.get("model_alias_for_api", "production")
-    MlflowClient().set_registered_model_alias(pipeline_cfg["model_registry_name"], alias, info.registered_model_version)
+    client.set_registered_model_alias(pipeline_cfg["model_registry_name"], alias, info.registered_model_version)
     logger.info(
         "Set alias '%s' to %s version %s", alias, pipeline_cfg["model_registry_name"], info.registered_model_version
     )
 
 
-def task_run_association_mining():
-    """
-    Airflow task to run the FP-Growth association Rule mining Task
-    """
-    logging.info("--- Starting Association Rule Mining Task ---")
+def task_run_association_mining(**kwargs):
+    """FP-Growth association rules over the cleaned departures (exploratory, not used by the models)."""
     config = get_app_config()
-    project_root = get_project_root()  # <-- Added this
-
-    # <-- Added project_root to these paths to make them absolute
-    cleaned_data_path = os.path.join(project_root, config["data_paths"]["cleaned_data"])
-    results_dir = os.path.join(project_root, config["association_mining"]["results"]["path"])
-    output_path = os.path.join(results_dir, config["association_mining"]["results"]["association_rules_filename"])
-
-    # Create results directory if it doesn't exist
-    os.makedirs(results_dir, exist_ok=True)
-
+    cleaned_path = kwargs["ti"].xcom_pull(task_ids="clean_and_engineer_data_task", key="cleaned_path")
+    output_path = _run_dir(kwargs) / config["association_mining"]["results"]["association_rules_filename"]
     find_association_rules(
-        data_path=cleaned_data_path,
+        data_path=cleaned_path,
         output_path=output_path,
         min_support=config["association_mining"]["min_support"],
         min_threshold=config["association_mining"]["min_threshold"],
     )
-    logging.info("--- Association Rule Mining Task Completed ---")
+    results_dir = resolve_path(config["association_mining"]["results"]["path"])
+    results_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(output_path, results_dir / output_path.name)
 
 
 def task_cleanup_processed_data(**kwargs):
-    ti = kwargs["ti"]
-    split_paths = ti.xcom_pull(task_ids="split_data_task", key="split_paths") or {}
-    params_path = ti.xcom_pull(task_ids="tune_hyperparameters_task", key="best_params_path")
-    for path in [*split_paths.values(), params_path]:
-        if path and os.path.exists(path):
-            os.remove(path)
-            logger.info("Removed intermediate file: %s", path)
+    """Remove this run's intermediate files; models and reports live in MLflow."""
+    run_dir = _run_dir(kwargs)
+    shutil.rmtree(run_dir, ignore_errors=True)
+    logger.info("Removed %s", run_dir)
