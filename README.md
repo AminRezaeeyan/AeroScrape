@@ -101,17 +101,12 @@ This is the easiest way to launch the entire MLOps environment. All components (
    ```
    This builds the image, creates the flight and Airflow databases, and starts all services. Postgres only runs its init scripts on an empty volume, so changing these roles later needs `docker compose down -v`, which deletes the stored flight data.
 
-4. **Trigger the ML Pipeline:**
-   * Open the Airflow Webserver UI in your browser at: **`http://localhost:8080`**
-   * Log in with the `AIRFLOW_ADMIN_USER` and `AIRFLOW_ADMIN_PASSWORD` values from `.env`.
-   * Run `make train`, or locate the `flight_delay_prediction_pipeline` DAG, unpause it, and trigger a run.
-   * Wait for all steps in the DAG (data validation, preprocessing, tuning, training, registry) to complete successfully and turn green.
+4. **Collect data and train:**
+   * Open Airflow at **`http://localhost:8080`** and log in with `AIRFLOW_ADMIN_USER` and `AIRFLOW_ADMIN_PASSWORD` from `.env`.
+   * `make ingest` scrapes the flight boards now and unpauses the 3-hourly `ingest_flights` DAG.
+   * `make train` runs `train_delay_model`: it trains a challenger and promotes it only if it passes the gate. The first model is promoted if it beats the baseline.
 
-5. **Load the Registered Model into the API:**
-   Once the DAG finishes training and registers `flight-delay-model` in MLflow, load it into the API:
-   ```bash
-   curl -X POST http://localhost:8000/reload
-   ```
+5. **Serve the model:** the API picks up a newly promoted model within 2 minutes, or immediately with `curl -X POST http://localhost:8000/reload`. `make model-status` shows what is serving and `make rollback VERSION=n` goes back to an earlier version. See [docs/operations.md](docs/operations.md).
 
 6. **Access the Services:**
    * **Inference Web UI (Streamlit):** `http://localhost:8501`
@@ -267,17 +262,10 @@ _SHAP breakdown of factors increasing or reducing delays alongside an interactiv
 
 ## Usage Workflow
 
-1.  **Data Ingestion:**
-    * Run the scraper to collect fresh flight data:
-        ```bash
-        aeroscrape
-        ```
-2.  **ML Pipeline Execution:**
-    * Trigger the Airflow DAG (`http://localhost:8080`).
-3.  **Model Management:**
-    * Access MLflow UI (`http://127.0.0.1:5000`) and ensure your model versions are promoted to stage/aliased to match your environment configs.
-4.  **Real-time Prediction:**
-    * Send prediction payloads to your FastAPI server (`http://localhost:8000/predict`) or use the interactive Streamlit UI (`http://localhost:8501`).
+1.  **Data ingestion:** the `ingest_flights` DAG scrapes every 3 hours (`make ingest` runs it now). `aeroscrape` runs one scrape from the command line.
+2.  **Training:** `train_delay_model` runs weekly (`make train` runs it now) and ends with the promotion gate.
+3.  **Model management:** `make model-status`, `make rollback VERSION=n`; every gate decision is an MLflow `promotion_gate` run.
+4.  **Prediction:** `POST http://localhost:8000/predict` or the Streamlit demo at `http://localhost:8501`.
 
 ---
 
