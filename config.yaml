@@ -101,6 +101,36 @@ association_mining:
     path: "data/mining/results"
     association_rules_filename: "assiciation_rules.csv"
 
+# Features: computed in aeroscrape.features.build, grouped so models and the ablation
+# can be assembled from groups. Each group lists numerical and categorical columns.
+features:
+  prediction_lead_minutes: 60         # live features use only what was known this long before departure
+  inbound_window_hours: 6             # how far back to look for the aircraft's inbound arrival
+  previous_departure_window_hours: 12
+  rate_window_days: 7                 # historical rates use the 7 days before the flight's date
+  rate_smoothing: 20                  # shrink rates of rare airlines and routes toward the overall rate
+  groups:
+    calendar:
+      numerical: ["Scheduled_Hour_of_Day", "scheduled_minute"]
+      categorical: ["scheduled_day_of_week", "is_weekend", "scheduled_time_of_day"]
+    identity:
+      categorical: ["airline", "destination_or_origin", "aircraft", "airport"]
+    rotation:          # from the schedule, known when the flight is booked
+      numerical: ["has_inbound", "scheduled_turnaround_min", "nth_flight_of_day_for_aircraft"]
+    congestion:        # scheduled traffic, known in advance
+      numerical: ["departures_same_hour", "airline_departures_today"]
+    rates:             # outcomes of earlier days only
+      numerical: ["airline_delay_rate_7d", "route_median_delay_7d"]
+    live_propagation:  # actual delays of the same aircraft, known 1 hour before departure
+      numerical: ["prev_departure_delay_min", "inbound_delay_min", "inbound_overdue_min"]
+  # Season and holiday flags (add_seasonal_features) are left out: they are constant
+  # within a three-week window. Add a group for them once the data spans a year.
+  variants:
+    booking: ["calendar", "identity", "rotation", "congestion", "rates"]
+    pre_departure: ["calendar", "identity", "rotation", "congestion", "rates", "live_propagation"]
+  served_variant: "booking"           # the API can't look up live features until Phase 4
+  ablation: [["calendar", "identity"], ["rotation"], ["congestion"], ["rates"], ["live_propagation"]]
+
 # Evaluation: split by scheduled time, never at random, so the test set is the future
 evaluation:
   time_column: "scheduled_datetime"
@@ -129,22 +159,6 @@ pipeline:
     n_trials_regression: 50
     n_trials_classification: 25
 
-  # Feature Definitions
-  categorical_features:
-    - "airline"
-    - "destination_or_origin"
-    - "aircraft"
-    - "airport"
-    - "scheduled_day_of_week"
-    - "scheduled_season"
-    - "scheduled_time_of_day"
-    - "is_weekend"
-    - "is_Nourooz_4"
-    - "is_Nourooz_13"
-    - "Normal_holiday"
-  numerical_features:
-    - "Scheduled_Hour_of_Day"
-    - "scheduled_minute"
   target_regression: "delay_minutes"
   target_classification: "is_delayed"
 

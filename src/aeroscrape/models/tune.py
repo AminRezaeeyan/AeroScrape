@@ -13,6 +13,7 @@ import optuna
 import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 
+from aeroscrape.features.preprocess import FeatureSet
 from aeroscrape.models.train import build_classification_pipeline, build_regression_pipeline
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ def tune_regression_hyperparameters(
     X: pd.DataFrame,
     y: pd.Series,
     pipeline_config: dict[str, Any],
+    features: FeatureSet,
     n_trials: int,
     cv_splits: int,
 ) -> tuple[dict[str, Any], float]:
@@ -42,7 +44,7 @@ def tune_regression_hyperparameters(
             "max_depth": trial.suggest_int("max_depth", 3, 12),
             "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
         }
-        pipeline = build_regression_pipeline(pipeline_config, params)
+        pipeline = build_regression_pipeline(pipeline_config, params, features)
         return -cross_val_score(pipeline, X, y, cv=cv, scoring="neg_mean_absolute_error").mean()
 
     study = _study(pipeline_config["random_state"], "minimize")
@@ -55,6 +57,7 @@ def tune_classification_hyperparameters(
     X: pd.DataFrame,
     y: pd.Series,
     pipeline_config: dict[str, Any],
+    features: FeatureSet,
     n_trials: int,
     cv_splits: int,
 ) -> tuple[dict[str, Any], float]:
@@ -71,7 +74,7 @@ def tune_classification_hyperparameters(
             "C": trial.suggest_float("C", 1e-4, 100, log=True),
             "penalty": trial.suggest_categorical("penalty", ["l1", "l2"]),
         }
-        pipeline = build_classification_pipeline(pipeline_config, params)
+        pipeline = build_classification_pipeline(pipeline_config, params, features)
         return -cross_val_score(pipeline, X, y, cv=cv, scoring="neg_brier_score").mean()
 
     study = _study(pipeline_config["random_state"], "minimize")

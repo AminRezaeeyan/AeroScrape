@@ -10,10 +10,9 @@ from mlflow import MlflowClient
 from aeroscrape.analysis.association import find_association_rules
 from aeroscrape.config import get_app_config, resolve_path
 from aeroscrape.config import project_root as _project_root
-from aeroscrape.data.clean import clean_and_engineer_features
+from aeroscrape.data.clean import clean_flights_file, read_flights
 from aeroscrape.data.split import Splits
 from aeroscrape.data.validate import validate_raw_data
-from aeroscrape.features.preprocess import load_data
 from aeroscrape.models.experiment import TunedParams, make_splits, train_and_evaluate, tune_models
 from aeroscrape.models.train import save_metrics, save_model
 from aeroscrape.models.tune import save_best_params
@@ -58,7 +57,8 @@ def task_clean_and_engineer_data(**kwargs):
     cleaned_data_path = os.path.join(project_root, app_config["data_paths"]["cleaned_data"])
     os.makedirs(os.path.dirname(cleaned_data_path), exist_ok=True)
 
-    clean_and_engineer_features(raw_data_path, cleaned_data_path)
+    audit = clean_flights_file(raw_data_path, cleaned_data_path)
+    logger.info("Cleaning audit:\n%s", audit.to_markdown())
     logger.info("Data cleaning and feature engineering complete.")
 
 
@@ -78,11 +78,20 @@ def _start_mlflow(app_config) -> None:
     mlflow.set_experiment(app_config["mlflow"]["experiment_name"])
 
 
+def _flat_params(params: TunedParams) -> dict[str, object]:
+    return {
+        f"{variant}.{task}.{key}": value
+        for variant, tasks in params.by_variant.items()
+        for task, values in tasks.items()
+        for key, value in values.items()
+    }
+
+
 def task_split_data(**kwargs):
     """Split cleaned flights by scheduled time and store each split as Parquet."""
     app_config = get_app_config()
-    cleaned = load_data(resolve_path(app_config["data_paths"]["cleaned_data"]))
-    splits = make_splits(cleaned, app_config)
+    flights = read_flights(resolve_path(app_config["data_paths"]["cleaned_data"]))
+    splits = make_splits(flights, app_config)
 
     out_dir = _splits_dir(app_config)
     os.makedirs(out_dir, exist_ok=True)
@@ -105,10 +114,14 @@ def task_tune_hyperparameters(**kwargs):
 
     _start_mlflow(app_config)
     with mlflow.start_run(run_name="hyperparameter_tuning"):
-        mlflow.log_params({f"regression.{k}": v for k, v in params.regression.items()})
-        mlflow.log_params({f"classification.{k}": v for k, v in params.classification.items()})
-        if params.cv_scores:
-            mlflow.log_metrics(params.cv_scores)
+        mlflow.log_params(_flat_params(params))
+        mlflow.log_metrics(
+            {
+                f"{variant}.{name}": value
+                for variant, scores in params.cv_scores.items()
+                for name, value in scores.items()
+            }
+        )
         mlflow.log_artifact(params_path, artifact_path="best_params")
     ti.xcom_push(key="best_params_path", value=params_path)
 
@@ -139,8 +152,8 @@ def task_train_and_evaluate(**kwargs):
 
     _start_mlflow(app_config)
     with mlflow.start_run(run_name="train_and_evaluate"):
-        mlflow.log_params({f"regression.{k}": v for k, v in params.regression.items()})
-        mlflow.log_params({f"classification.{k}": v for k, v in params.classification.items()})
+        mlflow.log_params(_flat_params(params))
+        mlflow.log_param("served_variant", result.served_variant)
         mlflow.log_params({f"split.{k}": app_config["evaluation"][k] for k in ("train_end", "val_end")})
         mlflow.log_metrics(result.report.to_metrics())
         mlflow.log_text(report_md, "evaluation/report.md")

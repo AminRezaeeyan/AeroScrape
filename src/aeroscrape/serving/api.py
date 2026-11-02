@@ -11,6 +11,9 @@ from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
 
 from aeroscrape.config import get_app_config, resolve_path
+from aeroscrape.data.clean import normalize_persian
+from aeroscrape.features.build import add_calendar_features
+from aeroscrape.features.preprocess import variant_feature_set
 
 logger = logging.getLogger(__name__)
 
@@ -138,71 +141,19 @@ def create_features(data: FlightInput) -> pd.DataFrame:
             detail="Invalid scheduled_datetime format. Use YYYY-MM-DD HH:MM:SS.",
         ) from e
 
-    dt_series = df["scheduled_datetime"]
+    # Same text normalization as the cleaner, so Arabic and Persian spellings match training
+    for col in ("airline", "airport", "destination_or_origin", "aircraft"):
+        df[col] = df[col].map(normalize_persian)
+    df = add_calendar_features(df)
 
-    df["scheduled_day_of_week"] = dt_series.dt.day_name()
-    df["is_weekend"] = df["scheduled_day_of_week"].isin(["Thursday", "Friday"]).astype(int)
-    df["Scheduled_Hour_of_Day"] = dt_series.dt.hour
-    df["scheduled_minute"] = dt_series.dt.minute
-
-    def get_time_of_day(dt_obj):
-        h = dt_obj.hour
-        if 5 <= h <= 11:
-            return "Morning"
-        elif 12 <= h <= 16:
-            return "Afternoon"
-        elif 17 <= h <= 20:
-            return "Evening"
-        return "Night"
-
-    df["scheduled_time_of_day"] = dt_series.apply(get_time_of_day)
-
-    def get_season(dt_obj):
-        m, d = dt_obj.month, dt_obj.day
-        if (m == 3 and d >= 21) or m in [4, 5] or (m == 6 and d <= 20):
-            return "Spring"
-        if (m == 6 and d >= 21) or m in [7, 8] or (m == 9 and d <= 22):
-            return "Summer"
-        if (m == 9 and d >= 23) or m in [10, 11] or (m == 12 and d <= 21):
-            return "Autumn"
-        return "Winter"
-
-    df["scheduled_season"] = dt_series.apply(get_season)
-
-    nourooz_4_dates = [(3, 21), (3, 22), (3, 23), (3, 24)]
-    df["is_Nourooz_4"] = dt_series.apply(lambda x: 1 if (x.month, x.day) in nourooz_4_dates else 0)
-    df["is_Nourooz_13"] = dt_series.apply(
-        lambda x: 1 if (x.month == 3 and x.day >= 21) or (x.month == 4 and x.day <= 2) else 0
-    )
-
-    other_fixed_holidays = [(3, 20), (2, 11), (6, 4), (6, 5)]
-
-    def check_normal_holiday(row_dt, is_nourooz_13_val):
-        if is_nourooz_13_val == 1:
-            return 0
-        if (row_dt.month, row_dt.day) in other_fixed_holidays:
-            return 1
-        return 0
-
-    df["Normal_holiday"] = df.apply(
-        lambda row: check_normal_holiday(row["scheduled_datetime"], row["is_Nourooz_13"]), axis=1
-    )
-
-    pipeline_config = app_config["pipeline"]
-    numerical_features = pipeline_config["numerical_features"]
-    categorical_features = pipeline_config["categorical_features"]
-
-    feature_columns_for_model = numerical_features + categorical_features
-
-    for col in feature_columns_for_model:
-        if col not in df.columns:
-            df[col] = None
-            logger.warning(f"Feature '{col}' was not generated/found; filled with None.")
-
-    if "scheduled_datetime" in df.columns and "scheduled_datetime" not in feature_columns_for_model:
-        df = df.drop(columns=["scheduled_datetime"])
-
-    return df[feature_columns_for_model]
+    # Features that need other flights (rotation, congestion, rates) can't be computed from
+    # one request yet; they stay missing and the model's imputer fills them. Phase 4 adds a
+    # feature lookup so the API builds them with the same code as training.
+    columns = variant_feature_set(app_config, app_config["features"]["served_variant"]).columns
+    missing = [col for col in columns if col not in df.columns]
+    if missing:
+        logger.info("Features without request-time data, left missing: %s", missing)
+    return df.reindex(columns=columns)
 
 
 @app.post("/predict", response_model=PredictionOutput, status_code=status.HTTP_200_OK)

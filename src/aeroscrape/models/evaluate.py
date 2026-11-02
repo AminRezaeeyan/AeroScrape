@@ -134,7 +134,7 @@ def _evaluate(
     y: np.ndarray,
     predictions: Mapping[str, tuple[np.ndarray, ...]],
     baselines: list[str],
-    primary: MetricSpec,
+    compare: tuple[MetricSpec, ...],
     indices: np.ndarray,
     confidence: float,
     notes: list[str],
@@ -150,13 +150,14 @@ def _evaluate(
             results[name][metric.name] = _interval(point, resampled, confidence)
 
     candidates = [name for name in predictions if name not in baselines]
-    sign = 1 if primary.lower_is_better else -1
-    best_baseline = min(baselines, key=lambda b: sign * results[b][primary.name].point)
     comparisons = []
-    for name in candidates:
-        diff_draws = draws[name][primary.name] - draws[best_baseline][primary.name]
-        diff_point = results[name][primary.name].point - results[best_baseline][primary.name].point
-        comparisons.append(Comparison(name, best_baseline, primary, _interval(diff_point, diff_draws, confidence)))
+    for metric in compare:
+        sign = 1 if metric.lower_is_better else -1
+        best_baseline = min(baselines, key=lambda b: sign * results[b][metric.name].point)
+        for name in candidates:
+            diff_draws = draws[name][metric.name] - draws[best_baseline][metric.name]
+            diff_point = results[name][metric.name].point - results[best_baseline][metric.name].point
+            comparisons.append(Comparison(name, best_baseline, metric, _interval(diff_point, diff_draws, confidence)))
     return TaskReport(title, metrics, baselines, candidates, results, comparisons, notes)
 
 
@@ -174,7 +175,7 @@ def evaluate_regression(
         y,
         {name: (np.asarray(p, dtype=float),) for name, p in predictions.items()},
         baselines,
-        REGRESSION_METRICS[0],
+        (REGRESSION_METRICS[0],),
         indices,
         confidence,
         notes=[f"Test delays: median {np.median(y):.0f} min, mean {np.mean(y):.0f} min, max {np.max(y):.0f} min."],
@@ -196,7 +197,7 @@ def evaluate_classification(
         y,
         {name: (np.asarray(labels), np.asarray(proba, dtype=float)) for name, (labels, proba) in predictions.items()},
         baselines,
-        CLASSIFICATION_METRICS[2],
+        (CLASSIFICATION_METRICS[2], CLASSIFICATION_METRICS[1]),
         indices,
         confidence,
         notes=[
@@ -204,6 +205,29 @@ def evaluate_classification(
             f"scores {max(y.mean(), 1 - y.mean()):.3f} accuracy. PR-AUC of a random ranking equals that rate."
         ],
     )
+
+
+def ablation_markdown(regression: TaskReport, classification: TaskReport) -> str:
+    """One row per cumulative feature set; differences are paired against the first row."""
+
+    def diff(task: TaskReport, model: str, metric: str) -> str:
+        for c in task.comparisons:
+            if c.model == model and c.metric.name == metric:
+                return c.difference.format("{:+.1f}" if "min" in metric else "{:+.3f}")
+        return "reference"
+
+    mae, brier, pr_auc = REGRESSION_METRICS[0], CLASSIFICATION_METRICS[2], CLASSIFICATION_METRICS[1]
+    lines = [
+        f"| Features | {mae.name} | Change in MAE | {brier.name} | Change in Brier | {pr_auc.name} |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for step in regression.baselines + regression.candidates:
+        lines.append(
+            f"| {step} | {regression.results[step][mae.name].format(mae.fmt)} | {diff(regression, step, mae.name)} "
+            f"| {classification.results[step][brier.name].format(brier.fmt)} | {diff(classification, step, brier.name)} "
+            f"| {classification.results[step][pr_auc.name].format(pr_auc.fmt)} |"
+        )
+    return "\n".join(lines)
 
 
 @dataclass

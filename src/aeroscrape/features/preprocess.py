@@ -1,13 +1,86 @@
-"""Model inputs: target columns and the feature preprocessor."""
+"""Model inputs: training rows with features and targets, feature sets, and the preprocessor."""
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
 from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
+from aeroscrape.data.clean import CleaningAudit, select_training_rows
+from aeroscrape.features.build import FeatureSettings, build_features
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FeatureSet:
+    numerical: tuple[str, ...]
+    categorical: tuple[str, ...]
+
+    @property
+    def columns(self) -> list[str]:
+        return [*self.numerical, *self.categorical]
+
+
+def feature_set(config: dict[str, Any], groups: list[str]) -> FeatureSet:
+    defined = config["features"]["groups"]
+    unknown = [g for g in groups if g not in defined]
+    if unknown:
+        raise KeyError(f"Unknown feature group(s) {unknown}; defined: {list(defined)}")
+    numerical = [c for g in groups for c in defined[g].get("numerical", [])]
+    categorical = [c for g in groups for c in defined[g].get("categorical", [])]
+    return FeatureSet(tuple(dict.fromkeys(numerical)), tuple(dict.fromkeys(categorical)))
+
+
+def variant_feature_set(config: dict[str, Any], variant: str) -> FeatureSet:
+    return feature_set(config, config["features"]["variants"][variant])
+
+
+def ablation_steps(config: dict[str, Any]) -> list[tuple[str, FeatureSet]]:
+    """Cumulative feature sets: the first step, then each later group added on top."""
+    steps, groups = [], []
+    for i, step in enumerate(config["features"]["ablation"]):
+        groups += step
+        label = " + ".join(step) if i == 0 else f"+ {' + '.join(step)}"
+        steps.append((label, feature_set(config, list(groups))))
+    return steps
+
+
+def make_model_frame(flights: pd.DataFrame, config: dict[str, Any], audit: CleaningAudit | None = None) -> pd.DataFrame:
+    """Training rows (departed domestic departures) with every feature and both targets."""
+    pipeline_cfg = config["pipeline"]
+    rows = select_training_rows(flights, audit)
+    frame = build_features(rows, flights, FeatureSettings.from_config(config))
+    frame[pipeline_cfg["target_classification"]] = (
+        frame[pipeline_cfg["target_regression"]] > pipeline_cfg["delay_threshold_minutes"]
+    ).astype(int)
+    return frame
+
+
+def feature_coverage(frame: pd.DataFrame, features: FeatureSet) -> pd.Series:
+    """Share of rows where each numerical feature is known."""
+    return frame[list(features.numerical)].notna().mean()
+
+
+def build_preprocessor(features: FeatureSet) -> ColumnTransformer:
+    numerical = Pipeline(
+        [
+            # Missing usually means "no linked flight", which is informative, hence the indicator
+            ("impute", SimpleImputer(strategy="median", add_indicator=True, keep_empty_features=True)),
+            ("scale", StandardScaler()),
+        ]
+    )
+    return ColumnTransformer(
+        transformers=[
+            ("num", numerical, list(features.numerical)),
+            ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), list(features.categorical)),
+        ],
+        remainder="drop",
+    )
 
 
 def load_data(data_path):
@@ -15,34 +88,3 @@ def load_data(data_path):
     df = pd.read_csv(data_path)
     logger.info(f"Data loaded successfully. Shape: {df.shape}")
     return df
-
-
-def prepare_model_frame(df: pd.DataFrame, pipeline_config: dict[str, Any]) -> pd.DataFrame:
-    """Add the classification target and derived inputs that the cleaner doesn't produce."""
-    out = df.copy()
-    scheduled = pd.to_datetime(out["scheduled_datetime"])
-    out[pipeline_config["target_classification"]] = (
-        out[pipeline_config["target_regression"]] > pipeline_config["delay_threshold_minutes"]
-    ).astype(int)
-    # Previously parsed from scheduled_time with an HH:MM:SS format that never matched,
-    # so the feature was 0 for every training row while the API used the real minute.
-    out["scheduled_minute"] = scheduled.dt.minute
-    return out
-
-
-def feature_columns(pipeline_config: dict[str, Any]) -> list[str]:
-    return list(pipeline_config["numerical_features"]) + list(pipeline_config["categorical_features"])
-
-
-def build_preprocessor(pipeline_config: dict[str, Any]) -> ColumnTransformer:
-    return ColumnTransformer(
-        transformers=[
-            ("num", StandardScaler(), list(pipeline_config["numerical_features"])),
-            (
-                "cat",
-                OneHotEncoder(handle_unknown="ignore", sparse_output=False),
-                list(pipeline_config["categorical_features"]),
-            ),
-        ],
-        remainder="drop",
-    )

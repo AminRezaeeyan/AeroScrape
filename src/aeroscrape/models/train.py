@@ -9,21 +9,25 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
 from aeroscrape.config import get_app_config, resolve_path
-from aeroscrape.features.preprocess import build_preprocessor
+from aeroscrape.features.preprocess import FeatureSet, build_preprocessor
 
 logger = logging.getLogger(__name__)
 
 
-def build_regression_pipeline(pipeline_config: dict[str, Any], params: dict[str, Any]) -> Pipeline:
+def build_regression_pipeline(
+    pipeline_config: dict[str, Any], params: dict[str, Any], features: FeatureSet
+) -> Pipeline:
     """Preprocessor + LightGBM regressor. Fitting the whole pipeline keeps the preprocessor
     from ever seeing the rows a model is scored on, including inside CV folds."""
     model = lgb.LGBMRegressor(**params, random_state=pipeline_config["random_state"])
-    return Pipeline([("preprocess", build_preprocessor(pipeline_config)), ("model", model)])
+    return Pipeline([("preprocess", build_preprocessor(features)), ("model", model)])
 
 
-def build_classification_pipeline(pipeline_config: dict[str, Any], params: dict[str, Any]) -> Pipeline:
+def build_classification_pipeline(
+    pipeline_config: dict[str, Any], params: dict[str, Any], features: FeatureSet
+) -> Pipeline:
     model = LogisticRegression(**params, random_state=pipeline_config["random_state"])
-    return Pipeline([("preprocess", build_preprocessor(pipeline_config)), ("model", model)])
+    return Pipeline([("preprocess", build_preprocessor(features)), ("model", model)])
 
 
 def save_model(model, model_name, subfolder=""):

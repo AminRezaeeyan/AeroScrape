@@ -5,16 +5,16 @@ import pandas as pd
 import pytest
 
 from aeroscrape.config import get_app_config
-from aeroscrape.data.clean import clean_and_engineer_features
+from aeroscrape.data.clean import clean_flights_file, read_flights
 from aeroscrape.data.split import Splits
-from aeroscrape.models.experiment import REGRESSOR_NAME, make_splits, run_experiment, tune_models
+from aeroscrape.models.experiment import make_splits, regressor_name, run_experiment, tune_models
 
 
 @pytest.fixture(scope="module")
 def cleaned(tmp_path_factory: pytest.TempPathFactory) -> pd.DataFrame:
     out = tmp_path_factory.mktemp("clean") / "cleaned.csv"
-    clean_and_engineer_features(Path(__file__).parent / "fixtures" / "sample_raw.csv", out)
-    return pd.read_csv(out)
+    clean_flights_file(Path(__file__).parent / "fixtures" / "sample_raw.csv", out)
+    return read_flights(out)
 
 
 @pytest.fixture
@@ -30,8 +30,9 @@ def test_experiment_runs_end_to_end(cleaned: pd.DataFrame, config: dict) -> None
     result = run_experiment(cleaned, config, tune=True)
     report = result.report.to_markdown()
 
-    assert REGRESSOR_NAME in report and "baseline" in report
-    assert result.params.cv_scores.keys() == {"cv_mae", "cv_brier"}
+    assert regressor_name("booking") in report and regressor_name("pre_departure") in report
+    assert "## Feature ablation" in report and "baseline" in report
+    assert result.params.cv_scores["booking"].keys() == {"cv_mae", "cv_brier"}
     assert all(0 <= v <= 1 for k, v in result.report.to_metrics().items() if "brier" in k and "minus" not in k)
 
 
