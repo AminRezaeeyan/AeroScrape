@@ -25,6 +25,7 @@ htmlcov/
 
 # Runtime logs and process state
 /logs/
+/reports/
 *.log
 *.pid
 
