@@ -5,7 +5,8 @@ import requests
 import streamlit as st
 
 # Configure Backend URL (Use container network hostname 'api' inside Docker)
-BACKEND_URL = os.getenv("BACKEND_URL", "http://api:8000/predict")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://api:8000/v1/predict")
+API_KEY = os.getenv("AEROSCRAPE_API_KEY")
 
 st.set_page_config(page_title="AeroScrape - Flight Delay Predictor", layout="centered")
 
@@ -51,7 +52,13 @@ if submit_btn:
 
     try:
         with st.spinner("Predicting..."):
-            response = requests.post(BACKEND_URL, json=payload, timeout=30)
+            response = requests.post(
+                BACKEND_URL,
+                params={"explain": "true"},
+                json=payload,
+                headers={"X-API-Key": API_KEY} if API_KEY else {},
+                timeout=30,
+            )
 
         if response.status_code == 200:
             result = response.json()
@@ -71,7 +78,7 @@ if submit_btn:
                     "where about 3 in 4 flagged flights are delayed."
                 )
 
-            factors = result.get("top_factors", [])
+            factors = result.get("top_factors") or []
             if factors:
                 st.subheader("What drove this prediction")
                 st.caption(

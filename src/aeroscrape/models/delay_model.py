@@ -74,6 +74,15 @@ class DelayModelBundle:
     def prepare_input(self, X: pd.DataFrame) -> pd.DataFrame:
         return prepare_input(X, self.features)
 
+    def known_categories(self) -> dict[str, set[str]]:
+        """The values of each categorical feature the model was trained on; others are ignored by it."""
+        preprocess = self.raw_classifier.named_steps["preprocess"]
+        encoder = preprocess.named_transformers_["cat"].named_steps["onehot"]
+        return {
+            col: {str(v) for v in values}
+            for col, values in zip(self.features.categorical, encoder.categories_, strict=True)
+        }
+
     def predict_range(self, X: pd.DataFrame, conformal: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         X = self.prepare_input(X)
         raw = np.column_stack([self.quantile_models[q].predict(X) for q in (0.1, 0.5, 0.9)])

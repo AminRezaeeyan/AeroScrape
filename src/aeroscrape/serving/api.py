@@ -1,23 +1,46 @@
+"""Flight delay prediction API, version 1.
+
+POST /v1/predict          one flight
+POST /v1/predict/batch    up to 500 flights, scored together
+POST /v1/reload           check the registry for a newly promoted model now
+GET  /health              the process is up
+GET  /ready               the model and the feature lookup are loaded
+
+Prediction routes need the X-API-Key header when AEROSCRAPE_API_KEY is set.
+"""
+
 import asyncio
 import logging
+import os
+import secrets
+import time
+import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Annotated, Any
 
 import mlflow
 import pandas as pd
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from mlflow import MlflowClient
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from aeroscrape.config import get_app_config
 from aeroscrape.data.clean import normalize_persian
 from aeroscrape.features.build import FeatureSettings, add_calendar_features
 from aeroscrape.models.delay_model import DelayModelBundle
 from aeroscrape.serving.feature_lookup import FeatureLookup
+from aeroscrape.serving.logs import configure_logging, request_id
 from aeroscrape.storage.database import Database
 
 logger = logging.getLogger(__name__)
+
+EXPLANATION_UNITS = "log-odds of a delay over 15 minutes, from the uncalibrated LightGBM classifier"
+MAX_BATCH = 500
+CHECKED_CATEGORIES = ("airline", "airport", "destination_or_origin", "aircraft")
 
 
 @dataclass(frozen=True)
@@ -25,6 +48,7 @@ class ServedModel:
     model: Any  # MLflow pyfunc: enforces the input signature
     bundle: DelayModelBundle  # the same model unwrapped, for explanations and metadata
     version: str
+    known: dict[str, set[str]] = field(default_factory=dict)  # categories seen in training
 
 
 # Replaced in a single assignment when a new version is promoted, so a request always uses
@@ -33,7 +57,10 @@ served: ServedModel | None = None
 app_config = None
 lookup: FeatureLookup | None = None
 
-EXPLANATION_UNITS = "log-odds of a delay over 15 minutes, from the uncalibrated LightGBM classifier"
+
+def _serve(model: Any, version: str) -> ServedModel:
+    bundle = model.unwrap_python_model().bundle
+    return ServedModel(model, bundle, version, bundle.known_categories())
 
 
 def _registry() -> tuple[MlflowClient, str, str]:
@@ -50,11 +77,10 @@ def load_model() -> None:
     try:
         client, name, alias = _registry()
         version = str(client.get_model_version_by_alias(name, alias).version)
-        model = mlflow.pyfunc.load_model(f"models:/{name}/{version}")
-        served = ServedModel(model, model.unwrap_python_model().bundle, version)
-        logger.info("Loaded %s version %s (%s variant)", name, version, served.bundle.variant)
+        served = _serve(mlflow.pyfunc.load_model(f"models:/{name}/{version}"), version)
+        logger.info("Model loaded", extra={"model": name, "model_version": version, "variant": served.bundle.variant})
     except Exception as e:
-        logger.warning("Could not load the delay model: %s. Prediction will be unavailable.", e)
+        logger.warning("Could not load the delay model; prediction is unavailable", extra={"error": str(e)})
         served = None
 
 
@@ -69,13 +95,15 @@ def refresh_if_promoted() -> bool:
         version = str(client.get_model_version_by_alias(name, alias).version)
         if served is not None and served.version == version:
             return False
-        model = mlflow.pyfunc.load_model(f"models:/{name}/{version}")
         previous = served.version if served else None
-        served = ServedModel(model, model.unwrap_python_model().bundle, version)
-        logger.info("Swapped %s from version %s to %s", name, previous, version)
+        served = _serve(mlflow.pyfunc.load_model(f"models:/{name}/{version}"), version)
+        logger.info("Swapped to a newly promoted model", extra={"from_version": previous, "model_version": version})
         return True
     except Exception as e:
-        logger.warning("Registry check failed, keeping version %s: %s", served.version if served else None, e)
+        logger.warning(
+            "Registry check failed; keeping the current model",
+            extra={"model_version": served.version if served else None, "error": str(e)},
+        )
         return False
 
 
@@ -85,18 +113,24 @@ async def poll_registry(interval_seconds: float) -> None:
         await asyncio.to_thread(refresh_if_promoted)
 
 
-def load_lookup():
+def load_lookup() -> None:
     """Connect the feature lookup to the flight database (read-only role)."""
     global lookup
     try:
         lookup = FeatureLookup(Database(), FeatureSettings.from_config(get_app_config()))
     except Exception as e:
-        logger.warning("Feature lookup unavailable: %s. Only request-time features will be used.", e)
+        logger.warning("Feature lookup unavailable; only request fields will be used", extra={"error": str(e)})
         lookup = None
+
+
+API_KEY = os.getenv("AEROSCRAPE_API_KEY")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging(os.getenv("LOG_LEVEL", "INFO"))
+    if not API_KEY:
+        logger.warning("AEROSCRAPE_API_KEY is not set: prediction routes accept requests without a key")
     load_model()
     load_lookup()
     interval = get_app_config().get("serving", {}).get("registry_poll_seconds", 120)
@@ -108,20 +142,70 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Flight Delay Prediction API",
     description="Calibrated probability of a delay over 15 minutes and a likely delay range.",
-    version="2.0.0",
+    version="3.0.0",
     lifespan=lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in os.getenv("AEROSCRAPE_CORS_ORIGINS", "http://localhost:8501").split(",")],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key", "X-Request-ID"],
 )
 
 
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    """Give every request an ID (the caller's X-Request-ID if sent) and log it as one JSON line."""
+    rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    token = request_id.set(rid)
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("Unhandled error", extra={"path": request.url.path})
+        response = JSONResponse({"detail": "Internal error", "request_id": rid}, status_code=500)
+    latency_ms = round((time.perf_counter() - start) * 1000, 1)
+    response.headers["X-Request-ID"] = rid
+    if request.url.path not in ("/health", "/ready"):
+        logger.info(
+            "request",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "latency_ms": latency_ms,
+                **getattr(request.state, "log", {}),
+            },
+        )
+    request_id.reset(token)
+    return response
+
+
+def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
+    if API_KEY and not (x_api_key and secrets.compare_digest(x_api_key, API_KEY)):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing or invalid X-API-Key")
+
+
+# ---------------------------------------------------------------------------- schemas
+
+
 class FlightInput(BaseModel):
-    airline: str
-    airport: str
-    destination_or_origin: str
-    aircraft: str
-    scheduled_datetime: str
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid", populate_by_name=True)
+
+    airline: str = Field(min_length=1, max_length=100)
+    airport: str = Field(min_length=1, max_length=100)
+    destination_or_origin: str = Field(min_length=1, max_length=100)
+    aircraft: str | None = Field(None, max_length=50)
+    scheduled_datetime: datetime = Field(description="Local scheduled departure, e.g. 2026-11-03 08:05:00")
     # With these, the lookup finds the scraped flight and the aircraft's rotation
-    flight_number: str | None = None
-    register: str | None = None
+    flight_number: str | None = Field(None, max_length=20)
+    registration: str | None = Field(None, alias="register", max_length=20)
+
+
+class BatchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    flights: list[FlightInput] = Field(min_length=1, max_length=MAX_BATCH)
 
 
 class DelayRange(BaseModel):
@@ -136,98 +220,136 @@ class FeatureContribution(BaseModel):
     contribution: float
 
 
-class PredictionOutput(BaseModel):
-    model_version: str | None
+class Prediction(BaseModel):
     p_delay_over_15: float
     likely_delayed: bool
-    decision_threshold: float
     delay_minutes: DelayRange
-    top_factors: list[FeatureContribution]
-    explanation_units: str
+    top_factors: list[FeatureContribution] | None = Field(None, description="Only with ?explain=true")
     warnings: list[str]
-    # Kept for clients of the previous response format
-    predicted_delay_minutes: float
-    is_delayed: bool
 
 
-def create_features(data: FlightInput, features: list[str]) -> tuple[pd.DataFrame, list[str]]:
-    """Build the model's input for one request with the training feature code.
+class PredictionResponse(Prediction):
+    model_version: str
+    decision_threshold: float
+    explanation_units: str | None = None
 
-    Returns the features and any warnings about information that couldn't be found.
-    """
-    try:
-        scheduled = pd.to_datetime(data.scheduled_datetime, errors="raise")
-    except Exception as e:
-        logger.error(f"Error parsing scheduled_datetime '{data.scheduled_datetime}': {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid scheduled_datetime format. Use YYYY-MM-DD HH:MM:SS.",
-        ) from e
 
-    request = data.model_dump() | {"scheduled_datetime": str(scheduled)}
-    warnings = []
+class BatchResponse(BaseModel):
+    model_version: str
+    decision_threshold: float
+    explanation_units: str | None = None
+    predictions: list[Prediction]
+
+
+# ---------------------------------------------------------------------------- prediction
+
+
+def _request_dict(flight: FlightInput) -> dict[str, Any]:
+    return flight.model_dump(by_alias=True) | {"scheduled_datetime": str(pd.Timestamp(flight.scheduled_datetime))}
+
+
+def build_features(flights: list[FlightInput], columns: list[str]) -> tuple[pd.DataFrame, list[list[str]]]:
+    """Model input for the flights, built with the training feature code, plus per-flight warnings."""
+    requests = [_request_dict(f) for f in flights]
     if lookup is not None:
         try:
-            result = lookup.lookup(request)
-            if data.flight_number and not result.matched_flight:
-                warnings.append("Flight not found among scraped flights; features use the request only.")
-            unknown = [c for c in features if pd.isna(result.features.iloc[0].get(c))]
-            if unknown:
-                warnings.append(f"Not known for this flight, filled by the model: {', '.join(unknown)}")
-            return result.features.reindex(columns=features), warnings
+            result = lookup.lookup_many(requests)
+            features = result.features.reindex(columns=columns)
+            warnings = []
+            for i, flight in enumerate(flights):
+                notes = []
+                if flight.flight_number and not result.matched[i]:
+                    notes.append("Flight not found among scraped flights; features use the request only.")
+                unknown = [c for c in columns if pd.isna(features.iloc[i][c])]
+                if unknown:
+                    notes.append(f"Not known for this flight, filled by the model: {', '.join(unknown)}")
+                warnings.append(notes)
+            return features, warnings
         except Exception as e:
-            logger.error("Feature lookup failed: %s", e, exc_info=True)
+            logger.error("Feature lookup failed; using request fields only", extra={"error": str(e)}, exc_info=True)
 
-    # Without the lookup only the request's own fields are available
-    df = pd.DataFrame([request])
-    df["scheduled_datetime"] = scheduled
-    for col in ("airline", "airport", "destination_or_origin", "aircraft"):
+    df = pd.DataFrame(requests)
+    df["scheduled_datetime"] = pd.to_datetime(df["scheduled_datetime"])
+    for col in CHECKED_CATEGORIES:
         df[col] = df[col].map(normalize_persian)
     df = add_calendar_features(df)
-    missing = [col for col in features if col not in df.columns]
-    warnings.append(f"Flight database unavailable; filled by the model: {', '.join(missing)}")
-    return df.reindex(columns=features), warnings
+    missing = [c for c in columns if c not in df.columns]
+    note = f"Flight database unavailable; filled by the model: {', '.join(missing)}"
+    return df.reindex(columns=columns), [[note] for _ in flights]
 
 
-@app.post("/predict", response_model=PredictionOutput, status_code=status.HTTP_200_OK)
-async def predict(flight_data: FlightInput):
+def _unseen(current: ServedModel, X: pd.DataFrame) -> list[list[str]]:
+    """Category values the model never saw in training: it ignores them, so the caller should know."""
+    checked = [c for c in CHECKED_CATEGORIES if c in current.known]
+    return [
+        [f"unseen {col}: {row[col]}" for col in checked if row[col] not in current.known[col] and row[col] != "nan"]
+        for _, row in X[checked].iterrows()
+    ]
+
+
+def predict_flights(
+    flights: list[FlightInput], explain: bool, request: Request
+) -> tuple[ServedModel, list[Prediction]]:
     current = served
     if current is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model is not loaded.")
     bundle = current.bundle
+    features, warnings = build_features(flights, bundle.features.columns)
+    X = bundle.prepare_input(features)
+    out = current.model.predict(X)  # one vectorized call for the whole batch
+    factors = bundle.explain(X, top=6) if explain else [None] * len(flights)
+    unseen = _unseen(current, X)
+    contributions = [None if rows is None else [FeatureContribution(**f) for f in rows] for rows in factors]
 
-    try:
-        features, warnings = create_features(flight_data, bundle.features.columns)
-        X = bundle.prepare_input(features)
-        prediction = current.model.predict(X).iloc[0]
-        factors = bundle.explain(X, top=6)[0]
-        p50 = round(float(prediction["p50"]), 1)
-        likely = bool(prediction["likely_delayed"])
-        return {
-            "model_version": current.version,
-            "p_delay_over_15": round(float(prediction["p_delay_over_15"]), 3),
-            "likely_delayed": likely,
-            "decision_threshold": bundle.threshold,
-            "delay_minutes": {
-                "p10": round(float(prediction["p10"]), 1),
-                "p50": p50,
-                "p90": round(float(prediction["p90"]), 1),
-            },
-            "top_factors": factors,
-            "explanation_units": EXPLANATION_UNITS,
-            "warnings": warnings,
-            "predicted_delay_minutes": p50,
-            "is_delayed": likely,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error during prediction: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Prediction failed: {e}") from e
+    predictions = [
+        Prediction(
+            p_delay_over_15=round(float(row["p_delay_over_15"]), 3),
+            likely_delayed=bool(row["likely_delayed"]),
+            delay_minutes=DelayRange(
+                p10=round(float(row["p10"]), 1), p50=round(float(row["p50"]), 1), p90=round(float(row["p90"]), 1)
+            ),
+            top_factors=contributions[i],
+            warnings=unseen[i] + warnings[i],
+        )
+        for i, (_, row) in enumerate(out.iterrows())
+    ]
+    request.state.log = {
+        "model_version": current.version,
+        "flights": len(flights),
+        "explain": explain,
+        "mean_p_delay": round(float(out["p_delay_over_15"].mean()), 3),
+        "mean_p50_minutes": round(float(out["p50"].mean()), 1),
+    }
+    return current, predictions
 
 
-@app.post("/reload", status_code=status.HTTP_200_OK)
-async def reload_assets():
+Explain = Annotated[bool, Query(description="Add per-flight SHAP contributions (slower)")]
+
+
+@app.post("/v1/predict", response_model=PredictionResponse, dependencies=[Depends(require_api_key)])
+def predict(flight: FlightInput, request: Request, explain: Explain = False):
+    current, [prediction] = predict_flights([flight], explain, request)
+    return PredictionResponse(
+        **prediction.model_dump(),
+        model_version=current.version,
+        decision_threshold=current.bundle.threshold,
+        explanation_units=EXPLANATION_UNITS if explain else None,
+    )
+
+
+@app.post("/v1/predict/batch", response_model=BatchResponse, dependencies=[Depends(require_api_key)])
+def predict_batch(batch: BatchInput, request: Request, explain: Explain = False):
+    current, predictions = predict_flights(batch.flights, explain, request)
+    return BatchResponse(
+        model_version=current.version,
+        decision_threshold=current.bundle.threshold,
+        explanation_units=EXPLANATION_UNITS if explain else None,
+        predictions=predictions,
+    )
+
+
+@app.post("/v1/reload", dependencies=[Depends(require_api_key)])
+async def reload_model():
     """Check the registry now instead of waiting for the next poll."""
     swapped = await asyncio.to_thread(refresh_if_promoted)
     if served is None:
@@ -235,14 +357,22 @@ async def reload_assets():
     return {"status": "success", "model_version": served.version, "swapped": swapped}
 
 
-@app.get("/health", status_code=status.HTTP_200_OK)
-async def health_check():
+@app.get("/health")
+async def health():
+    """Liveness: the process is up. Says nothing about the model."""
+    return {"status": "alive"}
+
+
+@app.get("/ready")
+async def ready():
+    """Readiness: the model and the feature lookup are loaded, so predictions are at full quality."""
     current = served
-    if current is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model is not loaded.")
-    return {
-        "status": "ok",
-        "model_version": current.version,
-        "variant": current.bundle.variant,
+    body = {
+        "model_version": current.version if current else None,
+        "variant": current.bundle.variant if current else None,
         "feature_lookup": "connected" if lookup is not None else "unavailable",
+        "auth": "api_key" if API_KEY else "disabled",
     }
+    if current is None or lookup is None:
+        return JSONResponse({"status": "not_ready", **body}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+    return {"status": "ready", **body}
