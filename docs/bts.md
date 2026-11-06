@@ -95,7 +95,7 @@ Error stops improving after about two weeks, around 12,000 departures. Two conse
 
 ### Calibration and drift
 
-The test week starts on Memorial Day (25 May), when 39% of departures were delayed, and the week as a whole had 26% delayed against 19% in training. Every model's probabilities come out somewhat low on test (reliability chart in the report; expected calibration error 0.028 to 0.049), the same kind of shift the Iranian validation window showed. It is the case for monitoring live calibration (Phase 9) and for the holiday features that are disabled until the Iranian data spans a year.
+The test week starts on Memorial Day (25 May), when 39% of departures were delayed, and the week as a whole had 26% delayed against 19% in training. Every model's probabilities come out somewhat low on test (reliability chart in the report; expected calibration error 0.028 to 0.049), the same kind of shift the Iranian validation window showed. It is the case for monitoring live calibration (the monitor DAG) and for the holiday features that are disabled until the Iranian data spans a year.
 
 The 75% precision target for the "likely delayed" flag is too strict for the booking-time model on BTS: with only a quarter of flights delayed, reaching it flags just 1% of flights. The target is a product decision that should be set per market.
 

@@ -71,5 +71,6 @@ Explanations use the uncalibrated classifier. Calibration is a monotone map appl
 
 ## Known limits
 
-- The API can't yet compute rotation, rate or live features from one request; they are filled by the model's imputer and reported in `warnings`, so served predictions are weaker than the test numbers above until the Phase 4 feature lookup.
-- Test covers three days in June 2025. Delay rates move by several points from day to day, so calibration will drift; Phase 9 monitors live calibration and coverage.
+- Test covers three days in June 2025, and delay rates move by several points from day to day. Live calibration and coverage are tracked per day by the monitor DAG ([monitoring.md](monitoring.md)).
+- The served variant is "at booking": most requests carry no registration, so the aircraft's live delays are unknown. The API builds every feature it can from the flight database ([serving.md](serving.md)) and lists the ones it couldn't in `warnings`.
+- Who should and shouldn't rely on the model, and when: [model_card.md](model_card.md).

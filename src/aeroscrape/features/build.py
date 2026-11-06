@@ -1,4 +1,4 @@
-"""The one place features are computed, for training and (from Phase 4) for serving.
+"""The one place features are computed, for training and for serving.
 
 `build_features(targets, context)` adds feature columns to the departures in
 `targets`, looking up related flights in `context` (all known flights, arrivals

@@ -13,7 +13,7 @@ A prediction is only useful before the flight, so every feature is restricted to
 
 Congestion is computed and kept in the ablation, but left out of both variants. The counts come from what was scraped, not from a full schedule, and scraped departures per day varied from 277 to 688 depending on how often the scraper ran, while training rows stayed near 240 a day. The count correlates 0.70 with the day's delay share, so it measures scraping effort rather than traffic, and a model using it (the LightGBM classifier ranked it first) would not carry over to live scraping.
 
-The API serves `booking` for now (`features.served_variant`), because it can't yet look up other flights at request time (Phase 4).
+The API serves `booking` (`features.served_variant`): most requests carry no registration, so the aircraft's live delays are unknown at request time.
 
 ## Groups
 
@@ -55,4 +55,4 @@ Reading it honestly:
 
 - The schedule-based groups (rotation, congestion, rates) add nothing measurable on this data, and rates may slightly hurt. With three weeks of history the 7-day rates are noisy, and airline identity already carries most of what they say.
 - The previous delay of the same aircraft is the strongest single feature (correlation 0.37 with the delay, against 0.17 or less for every other numeric feature), and the 1-hour-before model is the only one whose gain shows here, even with that feature known for a third of flights.
-- Most of the improvement over Phase 1 comes from the recovered data: the Phase 1 feature set scores 23.8 MAE on the larger dataset, where the tuned Phase 1 model scored 24.4 on the old one (different test sets, so this is indicative only).
+- Most of the improvement over the first honest evaluation comes from the recovered data: its feature set scores 23.8 MAE on the larger dataset, where its tuned model scored 24.4 on the old one (different test sets, so this is indicative only).

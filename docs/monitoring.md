@@ -113,7 +113,7 @@ same handful of numbers. The ~150 lines in `aeroscrape/monitoring/drift.py` are 
 | MonitoringStale | The monitor DAG hasn't run for a day |
 
 Alerts show in Prometheus (`/alerts`) and on the dashboard's "Firing alerts" panel. Notifications
-(Telegram, Slack) need an Alertmanager. It's not set up yet because it needs a bot token.
+(Telegram, Slack) need an Alertmanager with a bot token, which this stack doesn't include.
 
 ## Trying it without real traffic
 
@@ -144,9 +144,10 @@ Accuracy held up a year and a half later. The model's inputs did not:
 | `Scheduled_Hour_of_Day` | 0.32 | A different season's timetable |
 
 The drift triggered retraining. Version 6 was trained and the gate rejected it, so version 5 stays
-in production. That is the loop working as designed, and these data gaps are what Phase 10
-(scraper reliability) has to fix.
+in production. That is the loop working as designed. The gaps come from the site rather than the
+scraper: the boards publish registrations almost only at Mehrabad ([data-source.md](data-source.md)).
 
-The same ingest run also showed 16 of the 34 airport boards returning no rows. AirportBoardEmpty
+The same ingest run also showed 16 of the 34 airport boards returning no rows. Those boards were
+really empty (tables with headers and no flights), not failures. AirportBoardEmpty
 fires only when an airport that had flights this week goes quiet, so boards that are always empty
 don't page anyone.

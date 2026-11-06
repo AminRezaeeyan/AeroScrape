@@ -175,7 +175,7 @@ features:
   variants:
     booking: ["calendar", "identity", "rotation", "rates"]
     pre_departure: ["calendar", "identity", "rotation", "rates", "live_propagation"]
-  served_variant: "booking"           # the API can't look up live features until Phase 4
+  served_variant: "booking"           # most requests have no registration, so live delays are unknown
   ablation: [["calendar", "identity"], ["rotation"], ["congestion"], ["rates"], ["live_propagation"]]
 
 serving:
@@ -237,7 +237,7 @@ pipeline:
     n_trials_classification: 25
     n_trials_lgbm_classification: 40
 
-  # Phase 3 outputs: a calibrated probability and a delay range
+  # Outputs: a calibrated probability and a delay range
   calibration_method: "sigmoid"     # Platt scaling on out-of-fold predictions; isotonic overfits small data
   interval_coverage: 0.8            # target share of flights inside the 10-90% range
   conformal_intervals: true         # widen the range on validation so it really covers ~80%
