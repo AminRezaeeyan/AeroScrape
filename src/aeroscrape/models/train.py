@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import warnings
 from typing import Any
 
 import joblib
@@ -14,6 +15,16 @@ from aeroscrape.config import get_app_config, resolve_path
 from aeroscrape.features.preprocess import FeatureSet, build_preprocessor
 
 logger = logging.getLogger(__name__)
+
+# LightGBM 4.6 invents feature names (Column_0, ...) even when fitted on an array, so scikit-learn
+# 1.6 warns on every predict that "X does not have valid feature names". Our models always get the
+# same ColumnTransformer array at fit and predict time, so the warning is a false alarm; only this
+# exact message is silenced, so a real fit/predict mismatch elsewhere still warns.
+warnings.filterwarnings(
+    "ignore",
+    message="X does not have valid feature names, but LGBM(Regressor|Classifier) was fitted with feature names",
+    category=UserWarning,
+)
 
 
 def build_regression_pipeline(
