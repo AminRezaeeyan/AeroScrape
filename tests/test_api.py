@@ -194,7 +194,9 @@ def test_promoted_version_is_swapped_in(monkeypatch: pytest.MonkeyPatch) -> None
 
     class Loaded:
         def unwrap_python_model(self):
-            return type("W", (), {"bundle": type("B", (), {"known_categories": lambda self: {}})()})()
+            return type(
+                "W", (), {"bundle": type("B", (), {"variant": "booking", "known_categories": lambda self: {}})()}
+            )()
 
     registry = Registry()
     monkeypatch.setattr(api, "_registry", lambda: (registry, "flight-delay-model", "production"))

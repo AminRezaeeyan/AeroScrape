@@ -23,7 +23,10 @@ ROUTES = [
     ("فرودگاه شیراز", "تهران"),
 ]
 BATCH_SIZE = int(os.getenv("LOADTEST_BATCH_SIZE", "50"))
-HEADERS = {"X-API-Key": os.environ["AEROSCRAPE_API_KEY"]} if os.getenv("AEROSCRAPE_API_KEY") else {}
+# Labelled as load-test traffic, so the monitor DAG leaves it out of drift and live metrics
+HEADERS = {"X-Traffic-Source": "loadtest"} | (
+    {"X-API-Key": os.environ["AEROSCRAPE_API_KEY"]} if os.getenv("AEROSCRAPE_API_KEY") else {}
+)
 
 
 def flight() -> dict:

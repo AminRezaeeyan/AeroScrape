@@ -17,6 +17,7 @@ dependencies = [
     { name = "optuna" },
     { name = "pandas" },
     { name = "pandera" },
+    { name = "prometheus-client" },
     { name = "psycopg2-binary" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -31,6 +32,7 @@ airflow = [
 ]
 api = [
     { name = "fastapi" },
+    { name = "prometheus-fastapi-instrumentator" },
     { name = "pydantic" },
     { name = "shap" },
     { name = "uvicorn" },
@@ -67,6 +69,8 @@ requires-dist = [
     { name = "optuna", specifier = ">=4.3.0,<4.4" },
     { name = "pandas", specifier = ">=2.1.3,<2.2" },
     { name = "pandera", specifier = ">=0.24.0,<0.25" },
+    { name = "prometheus-client", specifier = ">=0.20,<1" },
+    { name = "prometheus-fastapi-instrumentator", marker = "extra == 'api'", specifier = ">=7,<8" },
     { name = "psycopg2-binary", specifier = ">=2.9.9,<2.10" },
     { name = "pydantic", marker = "extra == 'api'", specifier = ">=2.11.7,<2.12" },
     { name = "python-dotenv", specifier = ">=1.1.0,<1.2" },
@@ -2425,6 +2429,28 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/50/65/4456caa4e9bbd1d4d4b5eecaea41bb2cd31efe0e7e423c7a9ad8e2be75ea/prison-0.2.1.tar.gz", hash = "sha256:e6cd724044afcb1a8a69340cad2f1e3151a5839fd3a8027fd1357571e797c599", size = 12040, upload-time = "2021-08-26T18:58:48.128Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/bd/e55e14cd213174100be0353824f2add41e8996c6f32081888897e8ec48b5/prison-0.2.1-py2.py3-none-any.whl", hash = "sha256:f90bab63fca497aa0819a852f64fb21a4e181ed9f6114deaa5dc04001a7555c5", size = 5794, upload-time = "2021-08-26T18:58:46.254Z" },
+]
+
+[[package]]
+name = "prometheus-client"
+version = "0.26.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/73/f1334c29c2af4cd9dba6c7817e61b611bd0215e2eb5565c6064a4de18802/prometheus_client-0.26.0.tar.gz", hash = "sha256:04a91bcf94e2cf74a44a1a874d651a2e853ed354b6e822f3b7487751465d5c2b", size = 92910, upload-time = "2026-07-24T19:36:41.893Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/a3/b69efbf4143b5b9859b977770bbbabcc2796b702fa69dc40271e45cd5a56/prometheus_client-0.26.0-py3-none-any.whl", hash = "sha256:fa93d06737aa02bacd05794768508bb97d2fbee28cb3bca04eaae92f0ca953d6", size = 64494, upload-time = "2026-07-24T19:36:40.854Z" },
+]
+
+[[package]]
+name = "prometheus-fastapi-instrumentator"
+version = "7.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "prometheus-client" },
+    { name = "starlette" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/69/6d/24d53033cf93826aa7857699a4450c1c67e5b9c710e925b1ed2b320c04df/prometheus_fastapi_instrumentator-7.1.0.tar.gz", hash = "sha256:be7cd61eeea4e5912aeccb4261c6631b3f227d8924542d79eaf5af3f439cbe5e", size = 20220, upload-time = "2025-03-19T19:35:05.351Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/72/0824c18f3bc75810f55dacc2dd933f6ec829771180245ae3cc976195dec0/prometheus_fastapi_instrumentator-7.1.0-py3-none-any.whl", hash = "sha256:978130f3c0bb7b8ebcc90d35516a6fe13e02d2eb358c8f83887cdef7020c31e9", size = 19296, upload-time = "2025-03-19T19:35:04.323Z" },
 ]
 
 [[package]]

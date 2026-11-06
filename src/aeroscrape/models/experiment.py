@@ -101,6 +101,10 @@ def classifier_name(variant: str) -> str:
     return f"LightGBM, calibrated ({_label(variant)})"
 
 
+def interval_name(variant: str) -> str:
+    return f"LightGBM percentiles + conformal ({_label(variant)})"
+
+
 @dataclass
 class TunedParams:
     """Per variant: {"regression": ..., "classification": ..., "lgbm_classification": ...} plus CV scores."""
@@ -380,7 +384,7 @@ def train_and_evaluate(
         low, mid, high = bundle.predict_range(X_test, conformal=False)
         point[regressor_name(variant)] = mid
         ranges[f"LightGBM percentiles ({label})"] = (low, mid, high)
-        ranges[f"LightGBM percentiles + conformal ({label})"] = bundle.predict_range(X_test)
+        ranges[interval_name(variant)] = bundle.predict_range(X_test)
         raw_p = vf.uncalibrated.predict_proba(X_test)[:, 1]
         cal_p = bundle.predict_proba(X_test)
         probabilities[f"Logistic regression ({label})"] = (

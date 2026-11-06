@@ -5,8 +5,11 @@ POST /v1/predict/batch    up to 500 flights, scored together
 POST /v1/reload           check the registry for a newly promoted model now
 GET  /health              the process is up
 GET  /ready               the model and the feature lookup are loaded
+GET  /metrics             Prometheus metrics
 
-Prediction routes need the X-API-Key header when AEROSCRAPE_API_KEY is set.
+Prediction routes need the X-API-Key header when AEROSCRAPE_API_KEY is set. Every scored
+flight is logged to the predictions table after the response is sent, for monitoring; the
+X-Traffic-Source header (client, replay or loadtest) labels synthetic traffic.
 """
 
 import asyncio
@@ -22,16 +25,19 @@ from typing import Annotated, Any
 
 import mlflow
 import pandas as pd
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from mlflow import MlflowClient
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, ConfigDict, Field
 
 from aeroscrape.config import get_app_config
 from aeroscrape.data.clean import normalize_persian
 from aeroscrape.features.build import FeatureSettings, add_calendar_features
 from aeroscrape.models.delay_model import DelayModelBundle
+from aeroscrape.monitoring.prediction_log import TRAFFIC_SOURCES, PredictionLog, PredictionRecord, build_records
+from aeroscrape.serving import metrics
 from aeroscrape.serving.feature_lookup import FeatureLookup
 from aeroscrape.serving.logs import configure_logging, request_id
 from aeroscrape.storage.database import Database
@@ -56,10 +62,12 @@ class ServedModel:
 served: ServedModel | None = None
 app_config = None
 lookup: FeatureLookup | None = None
+prediction_log: PredictionLog | None = None
 
 
 def _serve(model: Any, version: str) -> ServedModel:
     bundle = model.unwrap_python_model().bundle
+    metrics.set_model_info(version, bundle.variant)
     return ServedModel(model, bundle, version, bundle.known_categories())
 
 
@@ -97,6 +105,7 @@ def refresh_if_promoted() -> bool:
             return False
         previous = served.version if served else None
         served = _serve(mlflow.pyfunc.load_model(f"models:/{name}/{version}"), version)
+        metrics.MODEL_RELOADS.inc()
         logger.info("Swapped to a newly promoted model", extra={"from_version": previous, "model_version": version})
         return True
     except Exception as e:
@@ -114,13 +123,26 @@ async def poll_registry(interval_seconds: float) -> None:
 
 
 def load_lookup() -> None:
-    """Connect the feature lookup to the flight database (read-only role)."""
-    global lookup
+    """Connect the feature lookup and the prediction log to the flight database (API role)."""
+    global lookup, prediction_log
     try:
-        lookup = FeatureLookup(Database(), FeatureSettings.from_config(get_app_config()))
+        db = Database()
+        lookup = FeatureLookup(db, FeatureSettings.from_config(get_app_config()))
+        prediction_log = PredictionLog(db)
     except Exception as e:
         logger.warning("Feature lookup unavailable; only request fields will be used", extra={"error": str(e)})
-        lookup = None
+        lookup = prediction_log = None
+
+
+def write_prediction_log(records: list[PredictionRecord]) -> None:
+    """Runs after the response is sent: a logging failure never fails or slows a prediction."""
+    if prediction_log is None:
+        return
+    try:
+        prediction_log.write(records)
+    except Exception as e:
+        metrics.LOG_FAILURES.inc()
+        logger.warning("Could not log predictions", extra={"error": str(e), "flights": len(records)})
 
 
 API_KEY = os.getenv("AEROSCRAPE_API_KEY")
@@ -149,8 +171,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in os.getenv("AEROSCRAPE_CORS_ORIGINS", "http://localhost:8501").split(",")],
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-API-Key", "X-Request-ID"],
+    allow_headers=["Content-Type", "X-API-Key", "X-Request-ID", "X-Traffic-Source"],
 )
+Instrumentator(excluded_handlers=["/metrics", "/health", "/ready"]).instrument(app).expose(app, include_in_schema=False)
 
 
 @app.middleware("http")
@@ -166,7 +189,7 @@ async def request_context(request: Request, call_next):
         response = JSONResponse({"detail": "Internal error", "request_id": rid}, status_code=500)
     latency_ms = round((time.perf_counter() - start) * 1000, 1)
     response.headers["X-Request-ID"] = rid
-    if request.url.path not in ("/health", "/ready"):
+    if request.url.path not in ("/health", "/ready", "/metrics"):
         logger.info(
             "request",
             extra={
@@ -253,12 +276,14 @@ def build_features(flights: list[FlightInput], columns: list[str]) -> tuple[pd.D
     requests = [_request_dict(f) for f in flights]
     if lookup is not None:
         try:
-            result = lookup.lookup_many(requests)
+            with metrics.FEATURE_LOOKUP_SECONDS.time():
+                result = lookup.lookup_many(requests)
             features = result.features.reindex(columns=columns)
             warnings = []
             for i, flight in enumerate(flights):
                 notes = []
                 if flight.flight_number and not result.matched[i]:
+                    metrics.UNMATCHED_FLIGHTS.inc()
                     notes.append("Flight not found among scraped flights; features use the request only.")
                 unknown = [c for c in columns if pd.isna(features.iloc[i][c])]
                 if unknown:
@@ -266,6 +291,7 @@ def build_features(flights: list[FlightInput], columns: list[str]) -> tuple[pd.D
                 warnings.append(notes)
             return features, warnings
         except Exception as e:
+            metrics.LOOKUP_FAILURES.inc()
             logger.error("Feature lookup failed; using request fields only", extra={"error": str(e)}, exc_info=True)
 
     df = pd.DataFrame(requests)
@@ -287,8 +313,24 @@ def _unseen(current: ServedModel, X: pd.DataFrame) -> list[list[str]]:
     ]
 
 
+def _traffic_source(request: Request) -> str:
+    source = request.headers.get("X-Traffic-Source", "client").lower()
+    return source if source in TRAFFIC_SOURCES else "client"
+
+
+def _record_metrics(current: ServedModel, X: pd.DataFrame, out: pd.DataFrame, source: str, endpoint: str) -> None:
+    known_airports = current.known.get("airport")
+    for airport, delayed, p50, p in zip(
+        X["airport"], out["likely_delayed"], out["p50"], out["p_delay_over_15"], strict=True
+    ):
+        label = airport if known_airports is None or airport in known_airports else "other"
+        metrics.PREDICTIONS.labels(label, str(bool(delayed)).lower(), source, endpoint).inc()
+        metrics.PREDICTED_DELAY.observe(float(p50))
+        metrics.PREDICTED_PROBABILITY.observe(float(p))
+
+
 def predict_flights(
-    flights: list[FlightInput], explain: bool, request: Request
+    flights: list[FlightInput], explain: bool, request: Request, background: BackgroundTasks, endpoint: str
 ) -> tuple[ServedModel, list[Prediction]]:
     current = served
     if current is None:
@@ -296,10 +338,23 @@ def predict_flights(
     bundle = current.bundle
     features, warnings = build_features(flights, bundle.features.columns)
     X = bundle.prepare_input(features)
-    out = current.model.predict(X)  # one vectorized call for the whole batch
-    factors = bundle.explain(X, top=6) if explain else [None] * len(flights)
+    with metrics.MODEL_SECONDS.time():
+        out = current.model.predict(X)  # one vectorized call for the whole batch
+    factors: list[list[dict[str, Any]] | None] = [None] * len(flights)
+    if explain:
+        with metrics.SHAP_SECONDS.time():
+            factors = list(bundle.explain(X, top=6))
     unseen = _unseen(current, X)
+    for notes in unseen:
+        for note in notes:
+            metrics.UNSEEN_CATEGORIES.labels(note.split(":", 1)[0].removeprefix("unseen ")).inc()
     contributions = [None if rows is None else [FeatureContribution(**f) for f in rows] for rows in factors]
+    source = _traffic_source(request)
+    _record_metrics(current, X, out, source, endpoint)
+    records = build_records(
+        request_id.get() or uuid.uuid4().hex, source, [_request_dict(f) for f in flights], X, out, current.version
+    )
+    background.add_task(write_prediction_log, records)
 
     predictions = [
         Prediction(
@@ -327,8 +382,8 @@ Explain = Annotated[bool, Query(description="Add per-flight SHAP contributions (
 
 
 @app.post("/v1/predict", response_model=PredictionResponse, dependencies=[Depends(require_api_key)])
-def predict(flight: FlightInput, request: Request, explain: Explain = False):
-    current, [prediction] = predict_flights([flight], explain, request)
+def predict(flight: FlightInput, request: Request, background: BackgroundTasks, explain: Explain = False):
+    current, [prediction] = predict_flights([flight], explain, request, background, "single")
     return PredictionResponse(
         **prediction.model_dump(),
         model_version=current.version,
@@ -338,8 +393,8 @@ def predict(flight: FlightInput, request: Request, explain: Explain = False):
 
 
 @app.post("/v1/predict/batch", response_model=BatchResponse, dependencies=[Depends(require_api_key)])
-def predict_batch(batch: BatchInput, request: Request, explain: Explain = False):
-    current, predictions = predict_flights(batch.flights, explain, request)
+def predict_batch(batch: BatchInput, request: Request, background: BackgroundTasks, explain: Explain = False):
+    current, predictions = predict_flights(batch.flights, explain, request, background, "batch")
     return BatchResponse(
         model_version=current.version,
         decision_threshold=current.bundle.threshold,
