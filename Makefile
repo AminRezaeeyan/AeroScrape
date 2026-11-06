@@ -5,6 +5,9 @@ TRAIN_DAG := train_delay_model
 INGEST_DAG := ingest_flights
 TRAIN_FRACTION ?= 1.0
 SOURCE ?= iran_fids
+USERS ?= 8
+LOADTEST_SECONDS ?= 30
+API_URL ?= http://localhost:8000
 
 .PHONY: setup lint format test loadtest fix-permissions build-offline up-offline data bts-data evaluate learning-curve train ingest rollback model-status up down
 
@@ -54,8 +57,16 @@ rollback:  ## Serve an earlier model version: make rollback VERSION=7
 model-status:  ## Show which model versions are production and challenger
 	docker compose exec airflow-scheduler python -m aeroscrape.models.registry status
 
-loadtest:  ## Latency and throughput of the running API (make up first); 30 s per scenario
-	uv run --frozen python tools/loadtest.py --api-key "$$(grep -E '^AEROSCRAPE_API_KEY=' .env | cut -d= -f2-)"
+loadtest:  ## Locust against the running API (make up first): USERS=8, 30 s per scenario
+	@mkdir -p reports/locust
+	@export AEROSCRAPE_API_KEY="$$(grep -E '^AEROSCRAPE_API_KEY=' .env | cut -d= -f2-)"; \
+	for scenario in SingleFlight ExplainedFlight BatchOfFlights; do \
+		uv run --frozen locust -f tools/locustfile.py $$scenario --headless --only-summary \
+			-u $(USERS) -r $(USERS) -t $(LOADTEST_SECONDS)s --host $(API_URL) \
+			--csv reports/locust/$$scenario --loglevel WARNING || exit 1; \
+	done
+	@uv run --frozen python tools/locust_report.py $(USERS) \
+		reports/locust/SingleFlight reports/locust/ExplainedFlight reports/locust/BatchOfFlights
 
 fix-permissions:  ## Give back to you files that older containers wrote as root into mounted folders
 	docker run --rm -v "$(CURDIR):/work" alpine chown -R $$(id -u):$$(id -g) /work/mlruns /work/logs /work/data /work/models

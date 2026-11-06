@@ -75,23 +75,23 @@ These fields are what the monitoring phase reads; no log parsing with regular ex
 
 ## Latency under load
 
-Measured with `make loadtest` ([`tools/loadtest.py`](../tools/loadtest.py)) against the Docker stack on a 4-core laptop, one uvicorn worker, flights for the next day so the feature lookup does its full work:
+Measured with `make loadtest` ([Locust](https://locust.io), [`tools/locustfile.py`](../tools/locustfile.py)) against the Docker stack on a 4-core laptop, one uvicorn worker, 30 s per scenario, users sending back to back with no think time, flights for the next day so the feature lookup does its full work:
 
-| Scenario | Concurrency | p50 (ms) | p95 (ms) | p99 (ms) | Requests/s | Flights/s |
+| Scenario | Users | p50 (ms) | p95 (ms) | p99 (ms) | Requests/s | Flights/s |
 | --- | --- | --- | --- | --- | --- | --- |
-| single flight | 1 | 102 | 115 | 165 | 9.5 | 10 |
-| single flight, `explain=true` | 1 | 210 | 243 | 302 | 4.7 | 5 |
-| batch of 50 | 1 | 142 | 189 | 220 | 6.8 | 340 |
-| single flight | 8 | 1,005 | 1,205 | 1,290 | 7.9 | 8 |
-| single flight, `explain=true` | 8 | 1,731 | 2,458 | 2,929 | 4.5 | 5 |
-| batch of 50 | 8 | 1,337 | 1,748 | 1,932 | 5.9 | 293 |
+| single flight | 1 | 100 | 140 | 180 | 9.3 | 9 |
+| single flight, `explain=true` | 1 | 210 | 290 | 320 | 4.5 | 4 |
+| batch of 50 | 1 | 140 | 180 | 220 | 6.9 | 346 |
+| single flight | 8 | 1,000 | 1,200 | 1,200 | 7.7 | 8 |
+| single flight, `explain=true` | 8 | 1,800 | 2,400 | 3,100 | 4.3 | 4 |
+| batch of 50 | 8 | 1,400 | 1,600 | 1,800 | 5.7 | 285 |
 
 No request failed. A prediction costs about 100 ms of CPU, most of it the feature lookup and model; at concurrency 8 requests queue behind one worker, so latency grows while throughput stays flat. Two consequences:
 
 - **Batch when you can.** Scoring 50 flights takes 1.4 times as long as scoring one, so batch throughput is about 35 times higher.
 - **Scale out with workers.** The service is CPU-bound and stateless apart from the loaded model, so more uvicorn workers (one per core, each with its own copy of the model) or more replicas raise throughput roughly linearly.
 
-Locust was the planned tool, but PyPI was unreachable when this was written; the small async load tester measures the same things.
+`make loadtest USERS=16 LOADTEST_SECONDS=60` changes the load; the raw Locust CSVs land in `reports/locust/`. To watch a run live, export `AEROSCRAPE_API_KEY` and start Locust's web UI with `uv run locust -f tools/locustfile.py --host http://localhost:8000` and open http://localhost:8089.
 
 ## Docker images
 
