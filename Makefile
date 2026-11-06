@@ -4,8 +4,9 @@ DATA_FILE := data/raw/data.csv
 TRAIN_DAG := train_delay_model
 INGEST_DAG := ingest_flights
 TRAIN_FRACTION ?= 1.0
+SOURCE ?= iran_fids
 
-.PHONY: setup lint format test data evaluate train ingest rollback model-status up down
+.PHONY: setup lint format test data bts-data evaluate learning-curve train ingest rollback model-status up down
 
 setup:  ## Install all dependencies from the lock file and the git hooks
 	uv sync --frozen --all-extras
@@ -28,13 +29,19 @@ data:  ## Download the raw dataset and verify its checksum
 	curl -fsSL -o $(DATA_FILE) $(DATA_URL)
 	echo "$(DATA_SHA256)  $(DATA_FILE)" | sha256sum --check
 
-evaluate:  ## Tune, train and evaluate locally on a time split; writes reports/evaluation.md
-	uv run --frozen python -m aeroscrape.models.experiment
+evaluate:  ## Tune, train and evaluate locally on a time split; SOURCE=bts for the US data
+	uv run --frozen python -m aeroscrape.models.experiment --source $(SOURCE)
+
+learning-curve:  ## Test error against weeks of training data; SOURCE=bts by default
+	uv run --frozen python -m aeroscrape.models.learning_curve --source $(if $(filter iran_fids,$(SOURCE)),bts,$(SOURCE))
+
+bts-data:  ## Download the BTS months configured in config.yaml (needs access to transtats.bts.gov)
+	uv run --frozen python -m aeroscrape.scraping.bts
 
 train:  ## Train a challenger and run the promotion gate; TRAIN_FRACTION=0.1 trains a deliberately worse model
 	docker compose exec airflow-scheduler airflow dags unpause $(TRAIN_DAG)
 	docker compose exec airflow-scheduler airflow dags trigger $(TRAIN_DAG) \
-		--conf '{"git_commit": "$(shell git rev-parse HEAD)", "git_dirty": "$(if $(shell git status --porcelain --untracked-files=no),true,false)", "train_fraction": $(TRAIN_FRACTION)}'
+		--conf '{"git_commit": "$(shell git rev-parse HEAD)", "git_dirty": "$(if $(shell git status --porcelain --untracked-files=no),true,false)", "train_fraction": $(TRAIN_FRACTION), "source": "$(SOURCE)"}'
 
 ingest:  ## Scrape the flight boards now (the ingest DAG also runs every 3 hours once unpaused)
 	docker compose exec airflow-scheduler airflow dags unpause $(INGEST_DAG)

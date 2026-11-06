@@ -22,7 +22,7 @@ REFERENCE = "#8a8984"
 SERIES = ("#2a78d6", "#eb6834", "#1baf7a")  # blue, orange, aqua: fixed order, never cycled
 
 
-def _style(ax, title: str, xlabel: str, ylabel: str) -> None:
+def style_axes(ax, title: str, xlabel: str, ylabel: str) -> None:
     ax.set_facecolor(SURFACE)
     ax.set_title(title, loc="left", fontsize=12, color=TEXT_PRIMARY, pad=12)
     ax.set_xlabel(xlabel, color=TEXT_SECONDARY, fontsize=10)
@@ -49,7 +49,7 @@ def reliability_figure(y: np.ndarray, curves: dict[str, np.ndarray], title: str)
     if len(curves) > len(SERIES):
         raise ValueError(f"At most {len(SERIES)} series; fold the rest into a table")
     fig, ax = plt.subplots(figsize=(7, 5.2), dpi=150, facecolor=SURFACE)
-    _style(ax, title, "Predicted probability of a delay over 15 min", "Observed share delayed")
+    style_axes(ax, title, "Predicted probability of a delay over 15 min", "Observed share delayed")
     ax.plot([0, 1], [0, 1], color=REFERENCE, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
     ax.text(0.97, 0.93, "perfect calibration", color=TEXT_SECONDARY, fontsize=8, ha="right", rotation=36)
 
@@ -100,7 +100,7 @@ def importance_figure(names: list[str], values: list[float], title: str, xlabel:
     """Horizontal bars, largest at the top; one series, so no legend."""
     order = np.argsort(values)
     fig, ax = plt.subplots(figsize=(7, 0.42 * len(names) + 1.4), dpi=150, facecolor=SURFACE)
-    _style(ax, title, xlabel, "")
+    style_axes(ax, title, xlabel, "")
     ax.grid(axis="y", visible=False)
     ax.barh([names[i] for i in order], [values[i] for i in order], color=SERIES[0], height=0.62)
     for rank, i in enumerate(order):
