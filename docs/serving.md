@@ -59,6 +59,8 @@ Each DAG run writes its intermediate files (cleaned flights, Parquet splits, tun
 | `GET /ready` | readiness: the model and the feature lookup are loaded (503 otherwise); compose's health check uses it | none |
 | `GET /metrics` | Prometheus metrics: requests and latency per route, flights scored per airport, predicted delay and probability, time in the feature lookup, model and SHAP, unseen categories, the served version | none (keep port 8000 off the internet, or put the API behind a proxy that hides it) |
 
+![API docs](screenshots/api-docs.png)
+
 - **Validation.** `scheduled_datetime` is a datetime, strings have length limits and unknown fields are rejected, all with a 422. A value of airline, airport, destination or aircraft that the model never saw in training is accepted, because the model handles it (it ignores the unknown category), but it is listed in `warnings` instead of being silently zeroed as before.
 - **Explanations are opt-in.** SHAP doubles the cost of a prediction, so `top_factors` is computed only with `?explain=true`.
 - **Errors** return a generic message and the request ID, not the exception text.
@@ -88,7 +90,10 @@ Measured with `make loadtest` ([Locust](https://locust.io), [`tools/locustfile.p
 | single flight, `explain=true` | 8 | 1,800 | 2,400 | 3,100 | 4.3 | 4 |
 | batch of 50 | 8 | 1,400 | 1,600 | 1,800 | 5.7 | 285 |
 
-No request failed. A prediction costs about 100 ms of CPU, most of it the feature lookup and model; at concurrency 8 requests queue behind one worker, so latency grows while throughput stays flat. Two consequences:
+![Locust statistics](screenshots/locust-stats.png)
+![Locust charts](screenshots/locust-charts.png)
+
+The screenshots are from a separate run, with the three scenarios together and 6 users. No request failed. A prediction costs about 100 ms of CPU, most of it the feature lookup and model; at concurrency 8 requests queue behind one worker, so latency grows while throughput stays flat. Two consequences:
 
 - **Batch when you can.** Scoring 50 flights takes 1.4 times as long as scoring one, so batch throughput is about 35 times higher.
 - **Scale out with workers.** The service is CPU-bound and stateless apart from the loaded model, so more uvicorn workers (one per core, each with its own copy of the model) or more replicas raise throughput roughly linearly.

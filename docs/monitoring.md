@@ -22,6 +22,8 @@ flowchart LR
     daily --> grafana
 ```
 
+![Grafana dashboard](screenshots/grafana-dashboard.png)
+
 | Where | What |
 | --- | --- |
 | Grafana, http://localhost:3000 (`admin`, `GRAFANA_ADMIN_PASSWORD`) | The AeroScrape dashboard: API traffic, latency and errors, predictions per airport, scraper rows, live vs. offline metrics, drift |
@@ -43,6 +45,8 @@ input as JSON, which the drift check reads.
 A flight is identified by `airport|flight number|scheduled time`, in the cleaner's normalized
 spelling. Requests without a flight number can't be matched to an outcome, but they still count
 for drift.
+
+![The monitor DAG in Airflow](screenshots/airflow-monitor-dag.png)
 
 The `X-Traffic-Source` header labels synthetic traffic: `client` (the default), `replay` or
 `loadtest`. `make loadtest` sends `loadtest`, which monitoring ignores; `make replay` sends `replay`,
@@ -83,12 +87,16 @@ their own, because an input that suddenly goes missing is drift too. PSI below 0
 Kolmogorov–Smirnov p-value, but with thousands of rows it flags even tiny shifts, so the decision
 uses PSI.
 
+![Drift report](screenshots/drift-report.png)
+
 This replaces Evidently, which would bring dozens of dependencies into the Airflow image for the
 same handful of numbers. The ~150 lines in `aeroscrape/monitoring/drift.py` are unit-tested.
 
 ## Alerts
 
 `monitoring/alerts.yml`, unit-tested with `promtool` (`make check-monitoring`, also in CI):
+
+![Prometheus alerts](screenshots/prometheus-alerts.png)
 
 | Alert | When |
 | --- | --- |

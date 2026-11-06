@@ -2,14 +2,17 @@
 
 Two Airflow DAGs, a promotion gate between training and serving, and one-command rollback.
 
-## The two DAGs
+## The DAGs
+
+![Airflow DAGs](screenshots/airflow-dags.png)
 
 | DAG | Schedule | Tasks |
 | --- | --- | --- |
 | `ingest_flights` | every 3 hours | scrape → validate → load into Postgres → cleanup |
 | `train_delay_model` | weekly | validate archive → build dataset → split → tune → train and evaluate → **gate** → promote or reject → cleanup |
+| `monitor_model` | daily | join outcomes → live performance, input drift → decide → maybe trigger `train_delay_model` ([monitoring.md](monitoring.md)) |
 
-They are separate because they run at different cadences and fail for different reasons: a site outage should not block training, and a training failure should not stop data collection.
+They are separate because they run at different cadences and fail for different reasons: a site outage should not block training, a training failure should not stop data collection, and monitoring must keep running while either is broken.
 
 - **Ingest every 3 hours.** Each airport page shows a rolling window of about a day, so a daily scrape misses flights and their final status. The load upserts on (flight number, scheduled time, airport), so a re-run updates rows instead of duplicating them.
 - **Validation** fails a batch if a required field is missing or the page layout looks wrong, but tolerates a few flights without a status or airline (up to 5%); the loader skips those rows and reports how many. An earlier version rejected a whole 700-flight scrape because one flight had no status.

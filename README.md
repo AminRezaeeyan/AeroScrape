@@ -4,8 +4,18 @@
 
 AeroScrape is a comprehensive MLOps (Machine Learning Operations) project designed to scrape real-time flight data, store it, train machine learning models to predict flight delays, and serve these predictions via a RESTful API. The entire pipeline is orchestrated using Apache Airflow, tracks experiment iterations via MLflow, and provides real-time explanations for predictions using SHAP (Explainable AI), served on a clean Streamlit interface.
 
-![Airflow Tasks Screenshot](docs/screenshots/airflow-tasks.png)
-_Screenshot of the Airflow DAG orchestrating the ML pipeline._
+![The Streamlit demo: chance of a delay, the likely range and what drives it](docs/screenshots/demo-prediction.png)
+
+<table>
+<tr>
+<td width="50%"><a href="docs/screenshots/grafana-dashboard.png"><img src="docs/screenshots/grafana-dashboard.png" alt="Grafana dashboard"></a><br><sub><b>Grafana</b>: API traffic, scraper rows, live vs. offline accuracy and input drift</sub></td>
+<td width="50%"><a href="docs/screenshots/airflow-monitor-dag.png"><img src="docs/screenshots/airflow-monitor-dag.png" alt="Airflow monitor DAG"></a><br><sub><b>Airflow</b>: the daily monitoring DAG, which can trigger retraining</sub></td>
+</tr>
+<tr>
+<td><a href="docs/screenshots/mlflow-registry.png"><img src="docs/screenshots/mlflow-registry.png" alt="MLflow model registry"></a><br><sub><b>MLflow</b>: versions with lineage tags, gate decisions and aliases</sub></td>
+<td><a href="docs/screenshots/locust-charts.png"><img src="docs/screenshots/locust-charts.png" alt="Locust load test"></a><br><sub><b>Locust</b>: load test of the prediction API</sub></td>
+</tr>
+</table>
 
 
 ## Results
@@ -262,20 +272,9 @@ streamlit run src/aeroscrape/demo/streamlit_app.py --server.port 8501 --server.a
 
 The demo dashboard provides a comprehensive evaluation of flight delay predictions. Beyond returning a numeric estimate, the backend computes individual feature importance using **SHAP**. This exposes exactly what factors are contributing to or preventing delays.
 
-### 🎥 Live Prediction Interface
-The interface allows users to select flight features and view estimated delays instantly.
+The dropdowns offer the airlines, airports, destinations and aircraft the served model was trained on (`GET /v1/model`). The result shows the calibrated chance of a delay over 15 minutes, the likely delay with its 10–90% range against the 15-minute line, and the SHAP contributions of the flight's features. The demo uses the [Vazirmatn](https://github.com/rastikerdar/vazirmatn) font, bundled with the app.
 
-![Demo Predictor Dashboard](docs/screenshots/demo-main.png)
-
-_Streamlit web form predicting a 35.22-minute delay._
-
-
-### 📊 Feature Explainability Breakdown
-Our pipeline maps the numerical and categorical components to illustrate positive and negative contributors behind the prediction.
-
-![SHAP Explainability Results and Charts](docs/screenshots/shap-explainability.png)
-
-_SHAP breakdown of factors increasing or reducing delays alongside an interactive feature impact bar chart._
+![Streamlit demo](docs/screenshots/demo-prediction.png)
 
 ---
 
@@ -322,13 +321,16 @@ Apache Superset is an open-source data visualization and data exploration platfo
 
 ## MLflow Integration
 
-![MLflow Metrics Dashboard](docs/screenshots/mlflow-metrics.png)
-_Screenshot of MLflow UI showing metrics for different model runs._
+![MLflow model registry](docs/screenshots/mlflow-registry.png)
+_The registry: each version carries its git commit, training window and data hash, and the gate's decision; the aliases mark what serves._
+
+![MLflow runs](docs/screenshots/mlflow-runs.png)
+_Every training run, tuning run and gate decision of the pipeline._
 
 MLflow is deeply integrated into the pipeline to ensure robust MLOps practices:
 
 * **Experiment Tracking:** Every run of the `task_tune_hyperparameters`, `task_train_evaluate_regression`, and `task_train_evaluate_classification` tasks in Airflow logs its parameters, metrics, and artifacts (like the `config.yaml`, preprocessor, and best parameters JSON) to the MLflow Tracking Server.
-* **Model Registry:** Trained models (`lgbm_regressor`, `logistic_classifier`) are automatically registered with the MLflow Model Registry. This enables versioning, stage/alias management, and a centralized repository for deployed models.
+* **Model Registry:** each training run registers one model, `flight-delay-model`, as the `challenger`; only the promotion gate moves the `production` alias to it ([docs/operations.md](docs/operations.md)).
 
 ---
 
