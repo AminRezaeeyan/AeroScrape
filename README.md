@@ -80,7 +80,7 @@ The AeroScrape project is built with a modular architecture, separating concerns
 2.  **Database:** A PostgreSQL database (`db` service in Docker setup) for storing raw and processed flight information.
 3.  **ML Pipeline:** The `aeroscrape.data`, `aeroscrape.features`, `aeroscrape.models` and `aeroscrape.pipeline` packages that perform the core ML workflow steps, from data validation to model training.
 4.  **Orchestration (Apache Airflow):** Airflow DAGs (`dags/`) define and schedule the execution of the ML pipeline scripts as a Directed Acyclic Graph.
-5.  **MLflow Tracking Server:** An MLflow instance (`mlflow_server` in Docker setup) that serves as a centralized repository for logging ML experiments, tracking metrics, and managing model versions in the Model Registry.
+5.  **MLflow Tracking Server:** An MLflow instance (the `mlflow` service in Docker) that serves as a centralized repository for logging ML experiments, tracking metrics, and managing model versions in the Model Registry.
 6.  **Inference API (FastAPI):** A FastAPI application (`aeroscrape.serving.api`) that loads the native ML model from MLflow Model Registry and provides a RESTful endpoint returning predictions along with real-time SHAP values.
 7.  **Inference Dashboard (Streamlit):** A user-friendly web interface (`aeroscrape.demo.streamlit_app`) allowing users to input flight details and examine predicted delays alongside contribution charts.
 8.  **Configuration (`aeroscrape.config`):** A configuration loader that handles both environment variables (`.env`) and structured YAML configuration (`config.yaml`).
@@ -106,7 +106,7 @@ This is the easiest way to launch the entire MLOps environment. All components (
    ```bash
    cp template.env .env
    ```
-   Edit `.env` and set every password. `DB_ADMIN_*` is the Postgres superuser that only sets up the database; the scraper uses the limited `DB_USER` role and Airflow uses `AIRFLOW_DB_USER`. If a value contains `$`, write it as `$$`, because Docker Compose expands variables in this file.
+   Edit `.env` and set every password and `AEROSCRAPE_API_KEY` (the API's key; the demo sends it too). `DB_ADMIN_*` is the Postgres superuser that only sets up the database; the scraper uses the limited `DB_USER` role and Airflow uses `AIRFLOW_DB_USER`. If a value contains `$`, write it as `$$`, because Docker Compose expands variables in this file.
 
 3. **Download the Dataset and Launch the Stack:**
    ```bash
@@ -120,7 +120,7 @@ This is the easiest way to launch the entire MLOps environment. All components (
    * `make ingest` scrapes the flight boards now and unpauses the 3-hourly `ingest_flights` DAG.
    * `make train` runs `train_delay_model`: it trains a challenger and promotes it only if it passes the gate. The first model is promoted if it beats the baseline.
 
-5. **Serve the model:** the API picks up a newly promoted model within 2 minutes, or immediately with `curl -X POST http://localhost:8000/reload`. `make model-status` shows what is serving and `make rollback VERSION=n` goes back to an earlier version. See [docs/operations.md](docs/operations.md).
+5. **Serve the model:** the API picks up a newly promoted model within 2 minutes, or immediately with `curl -X POST -H "X-API-Key: $AEROSCRAPE_API_KEY" http://localhost:8000/v1/reload`. `make model-status` shows what is serving and `make rollback VERSION=n` goes back to an earlier version. See [docs/operations.md](docs/operations.md).
 
 6. **Access the Services:**
    * **Inference Web UI (Streamlit):** `http://localhost:8501`
@@ -299,7 +299,7 @@ The Airflow task wrappers are covered by running the DAGs in Docker rather than 
 1.  **Data ingestion:** the `ingest_flights` DAG scrapes every 3 hours (`make ingest` runs it now). `aeroscrape` runs one scrape from the command line.
 2.  **Training:** `train_delay_model` runs weekly (`make train` runs it now) and ends with the promotion gate.
 3.  **Model management:** `make model-status`, `make rollback VERSION=n`; every gate decision is an MLflow `promotion_gate` run.
-4.  **Prediction:** `POST http://localhost:8000/predict` or the Streamlit demo at `http://localhost:8501`.
+4.  **Prediction:** `POST http://localhost:8000/v1/predict` (or `/v1/predict/batch`) with the `X-API-Key` header, or the Streamlit demo at `http://localhost:8501`.
 
 ---
 
@@ -354,15 +354,16 @@ aeroscrape --help
 The FastAPI service provides a RESTful API for real-time flight delay predictions.
 
 * **API Documentation:** `http://localhost:8000/docs` (Swagger UI)
-* **Health Check:** `http://localhost:8000/health`
+* **Liveness and readiness:** `GET /health`, `GET /ready`
+* **Contract, security, logs and measured latency:** [docs/serving.md](docs/serving.md)
 
-### `/predict` (POST)
+### `POST /v1/predict`
 
-Returns a calibrated probability of a delay over 15 minutes, a likely delay range and the main factors. Features are built from the flight database with the same code as training ([docs/serving.md](docs/serving.md)); `flight_number` and `register` are optional, but with them the aircraft's rotation is used.
+Returns a calibrated probability of a delay over 15 minutes and a likely delay range; add `?explain=true` for the main factors. Features are built from the flight database with the same code as training. `flight_number` and `register` are optional, but with them the aircraft's rotation is used. Requests need the `X-API-Key` header (the key is `AEROSCRAPE_API_KEY` in `.env`).
 
 ```bash
-curl -X POST http://localhost:8000/predict \
-  -H 'Content-Type: application/json' \
+curl -X POST "http://localhost:8000/v1/predict?explain=true" \
+  -H "X-API-Key: $AEROSCRAPE_API_KEY" -H 'Content-Type: application/json' \
   -d '{
     "airline": "وارش",
     "airport": "فرودگاه مهرآباد",
@@ -375,23 +376,21 @@ curl -X POST http://localhost:8000/predict \
 
 ```json
 {
-  "model_version": "2",
   "p_delay_over_15": 0.664,
   "likely_delayed": false,
-  "decision_threshold": 0.69,
   "delay_minutes": {"p10": 4.7, "p50": 20.1, "p90": 107.9},
   "top_factors": [
     {"feature": "nth_flight_of_day_for_aircraft", "value": "1", "contribution": 0.163},
     {"feature": "destination_or_origin", "value": "مشهد", "contribution": 0.136}
   ],
-  "explanation_units": "log-odds of a delay over 15 minutes, from the uncalibrated LightGBM classifier",
   "warnings": ["Not known for this flight, filled by the model: scheduled_turnaround_min"],
-  "predicted_delay_minutes": 20.1,
-  "is_delayed": false
+  "model_version": "5",
+  "decision_threshold": 0.69,
+  "explanation_units": "log-odds of a delay over 15 minutes, from the uncalibrated LightGBM classifier"
 }
 ```
 
-`predicted_delay_minutes` and `is_delayed` repeat `p50` and `likely_delayed` for clients of the earlier response format.
+`POST /v1/predict/batch` takes `{"flights": [...]}` with up to 500 flights and returns `predictions` in the same order. On a laptop a single prediction takes about 100 ms and a batch of 50 about 140 ms.
 
 ## Contributors
 
