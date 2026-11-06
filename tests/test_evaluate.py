@@ -42,3 +42,9 @@ def test_constant_probability_has_pr_auc_equal_to_the_positive_rate() -> None:
         y, {"Majority": (np.ones_like(y), p)}, ["Majority"], bootstrap_indices(len(y), 50, seed=1), 0.95, 15
     )
     assert abs(report.results["Majority"]["PR-AUC"].point - y.mean()) < 1e-9
+
+
+def test_undefined_metric_is_shown_as_not_available() -> None:
+    from aeroscrape.models.evaluate import Estimate
+
+    assert Estimate(float("nan"), float("nan"), float("nan")).format("{:.3f}") == "n/a"

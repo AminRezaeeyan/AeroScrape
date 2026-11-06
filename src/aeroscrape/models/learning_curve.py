@@ -148,7 +148,8 @@ def curve_figure(points: list[CurvePoint], title: str, reference_rows: int | Non
             color=TEXT_PRIMARY,
         )
     ax.set_xscale("log")
-    ax.set_xlim(min(rows) / 1.5, max(rows) * 3)
+    # Include the reference line even when it lies below the smallest training set
+    ax.set_xlim(min([*rows, reference_rows or rows[0]]) / 1.5, max(rows) * 3)
     # The space between the two lines is empty, so the legend goes there
     ax.legend(loc="center right", frameon=False, fontsize=9, labelcolor=TEXT_PRIMARY)
     fig.tight_layout()

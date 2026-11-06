@@ -127,6 +127,8 @@ class Estimate:
     high: float
 
     def format(self, fmt: str) -> str:
+        if np.isnan(self.point):
+            return "n/a"  # e.g. precision of a model that never predicts the positive class
         return f"{fmt.format(self.point)} [{fmt.format(self.low)}, {fmt.format(self.high)}]"
 
 
