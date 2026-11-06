@@ -2,6 +2,7 @@
 
 POST /v1/predict          one flight
 POST /v1/predict/batch    up to 500 flights, scored together
+GET  /v1/model            the served model and the category values it knows
 POST /v1/reload           check the registry for a newly promoted model now
 GET  /health              the process is up
 GET  /ready               the model and the feature lookup are loaded
@@ -400,6 +401,30 @@ def predict_batch(batch: BatchInput, request: Request, background: BackgroundTas
         decision_threshold=current.bundle.threshold,
         explanation_units=EXPLANATION_UNITS if explain else None,
         predictions=predictions,
+    )
+
+
+class ModelInfo(BaseModel):
+    model_version: str
+    variant: str
+    decision_threshold: float
+    trained_on: list[str] | None = None
+    categories: dict[str, list[str]] = Field(description="Values of each category the model was trained on")
+
+
+@app.get("/v1/model", response_model=ModelInfo, dependencies=[Depends(require_api_key)])
+def model_info():
+    """The served model and the category values it knows, e.g. for a client's dropdowns."""
+    current = served
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model is not loaded.")
+    trained_on = getattr(current.bundle, "metadata", {}).get("trained_on")
+    return ModelInfo(
+        model_version=current.version,
+        variant=current.bundle.variant,
+        decision_threshold=current.bundle.threshold,
+        trained_on=[str(t) for t in trained_on] if trained_on else None,
+        categories={col: sorted(v for v in values if v != "nan") for col, values in current.known.items()},
     )
 
 

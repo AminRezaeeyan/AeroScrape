@@ -220,3 +220,9 @@ def test_failed_registry_check_keeps_the_current_model(monkeypatch: pytest.Monke
     monkeypatch.setattr(api, "_registry", broken)
     assert not api.refresh_if_promoted()
     assert api.served is current
+
+
+def test_model_info_lists_the_known_categories(client: TestClient) -> None:
+    body = client.get("/v1/model").json()
+    assert body["model_version"] == "7" and body["variant"] == "booking"
+    assert body["categories"]["airline"] == sorted(KNOWN["airline"])

@@ -1,0 +1,47 @@
+# The demo's look. Read from the working directory: the repo root locally, /opt/aeroscrape in Docker.
+[server]
+enableStaticServing = true   # serves aeroscrape/demo/static (the Vazirmatn font) at app/static/
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#f6f8fb"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0f172a"
+font = "Vazirmatn, sans-serif"
+headingFont = "Vazirmatn, sans-serif"
+baseRadius = "0.75rem"
+borderColor = "#e2e8f0"
+showWidgetBorder = true
+
+[[theme.fontFaces]]
+family = "Vazirmatn"
+url = "app/static/Vazirmatn-Regular.woff2"
+weight = 400
+
+[[theme.fontFaces]]
+family = "Vazirmatn"
+url = "app/static/Vazirmatn-Medium.woff2"
+weight = 500
+
+[[theme.fontFaces]]
+family = "Vazirmatn"
+url = "app/static/Vazirmatn-SemiBold.woff2"
+weight = 600
+
+[[theme.fontFaces]]
+family = "Vazirmatn"
+url = "app/static/Vazirmatn-Bold.woff2"
+weight = 700
+
+[theme.sidebar]
+backgroundColor = "#0f172a"
+textColor = "#e2e8f0"
+secondaryBackgroundColor = "#1e293b"
+borderColor = "#1e293b"
+
+[client]
+toolbarMode = "viewer"   # no Deploy button or developer menu

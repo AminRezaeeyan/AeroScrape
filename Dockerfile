@@ -51,6 +51,7 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /opt/aeroscrape
 # The configuration is part of the image; compose mounts the working copy over it
 COPY --chown=app:app config.yaml ./
+COPY --chown=app:app .streamlit ./.streamlit
 USER app
 
 # ---------------------------------------------------------------------------- offline variant
@@ -62,4 +63,5 @@ FROM base AS runtime-prebuilt
 COPY --from=prebuilt-venv / /opt/venv
 WORKDIR /opt/aeroscrape
 COPY --chown=app:app config.yaml ./
+COPY --chown=app:app .streamlit ./.streamlit
 USER app
