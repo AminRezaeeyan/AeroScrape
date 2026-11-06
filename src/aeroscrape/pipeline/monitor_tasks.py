@@ -8,7 +8,7 @@ import mlflow
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
 
-from aeroscrape.config import get_app_config, resolve_path
+from aeroscrape.config import get_app_config, local_now, resolve_path
 from aeroscrape.data.clean import clean_flights
 from aeroscrape.models.registry import CHAMPION, alias_version, client_and_name
 from aeroscrape.monitoring.drift import detect_drift, drift_html
@@ -37,17 +37,12 @@ def _settings() -> tuple[dict[str, Any], dict[str, Any]]:
     return config, config["monitoring"]
 
 
-def local_now(monitoring: dict[str, Any]) -> pd.Timestamp:
-    """Now in the timezone of the scheduled times (they are stored as local, naive times)."""
-    return pd.Timestamp.now(tz=monitoring.get("timezone", "Asia/Tehran")).tz_localize(None)
-
-
 def task_join_outcomes(**kwargs):
     """Match predictions of flights that should have departed by now to their actual delays."""
     _, mon = _settings()
     db = Database()
     store = MonitoringStore(db)
-    until = local_now(mon) - pd.Timedelta(hours=mon["outcome_delay_hours"])
+    until = pd.Timestamp(local_now()) - pd.Timedelta(hours=mon["outcome_delay_hours"])
     since = until.normalize() - pd.Timedelta(days=mon["lookback_days"] + 1)
     pending = store.unmatched_predictions(since.to_pydatetime(), until.to_pydatetime())
     if pending.empty:
@@ -70,7 +65,7 @@ def task_live_performance(**kwargs):
     """Daily live MAE, Brier and coverage per model version, stored and pushed to Prometheus."""
     config, mon = _settings()
     store = MonitoringStore(Database())
-    until = local_now(mon) - pd.Timedelta(hours=mon["outcome_delay_hours"])
+    until = pd.Timestamp(local_now()) - pd.Timedelta(hours=mon["outcome_delay_hours"])
     since = until.normalize() - pd.Timedelta(days=mon["lookback_days"])
     rows = store.scored_flights(since.to_pydatetime(), until.to_pydatetime())
     daily = daily_performance(rows, mon["min_daily_outcomes"], config["pipeline"]["delay_threshold_minutes"])

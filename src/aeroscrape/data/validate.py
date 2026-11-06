@@ -1,8 +1,11 @@
 import logging
+from typing import Any
 
 import pandas as pd
 import pandera.pandas as pa
 from pandera.errors import SchemaError
+
+from aeroscrape.data.clean import normalize_persian
 
 logger = logging.getLogger(__name__)
 
@@ -54,3 +57,35 @@ def validate_raw_data(data_path):
     except Exception as e:
         logger.error(f"An unexpected error occurred during validation: {e}")
         raise
+
+
+class BatchTooSmallError(ValueError):
+    """A scrape returned fewer rows than a normal run, overall or for one of the busiest airports."""
+
+
+def check_row_counts(df: pd.DataFrame, min_rows: dict[str, Any]) -> list[str]:
+    """Problems with the size of a scraped batch (empty if none)."""
+    problems = []
+    if len(df) < min_rows.get("total", 0):
+        problems.append(f"{len(df)} rows in total, fewer than {min_rows['total']}")
+    counts = df["airport"].map(normalize_persian).value_counts() if len(df) else pd.Series(dtype=int)
+    for airport, minimum in (min_rows.get("per_airport") or {}).items():
+        n = int(counts.get(normalize_persian(airport), 0))
+        if n < minimum:
+            problems.append(f"{airport}: {n} rows, fewer than {minimum}")
+    return problems
+
+
+def quality_metrics(df: pd.DataFrame) -> dict[str, float]:
+    """Shares that drift when the site or the parser changes: empty cells and flights with an actual time."""
+    if df.empty:
+        return {}
+    blank = df.replace("", None).isna()
+    metrics = {
+        f"null_share.{col}": float(blank[col].mean())
+        for col in ("airline", "status", "register", "aircraft")
+        if col in df
+    }
+    if "actual_time" in df:
+        metrics["actual_time_share"] = float(1 - blank["actual_time"].mean())
+    return metrics

@@ -4,10 +4,25 @@ mlflow:
   experiment_name: "flight_delay_prediction"
 
 
+# Flight boards show local times; scheduled times are stored as such, and runs are named in it
+timezone: "Asia/Tehran"
+
 # Scraper Configuration
 scraper:
   base_url: "https://fids.airport.ir/"
-  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+  user_agent: "AeroScrape/1.0 (flight delay research; +https://github.com/AminRezaeeyan/AeroScrape)"
+  timeout_seconds: [5, 20]          # connect, read
+  retries: 3                        # connection errors and 429/5xx, with exponential backoff
+  delay_seconds: 1.5                # between airports
+  raw_html_dir: "data/raw_html"     # every fetched page is kept here, gzipped, to re-parse later
+  raw_html_retention_days: 14       # about 1 MB per run, 8 runs a day
+  # A run below these counts failed somewhere; small airports' boards are often empty, so only
+  # the busiest airports have a floor of their own
+  min_rows:
+    total: 200
+    per_airport:
+      "فرودگاه مهرآباد": 50
+      "فرودگاه مشهد": 30
   airports:
     - name: "فرودگاه مهرآباد"
       url: "/2/اطلاعات-پرواز-فرودگاه-مهرآباد"
@@ -170,7 +185,6 @@ serving:
 # monitoring/alerts.yml act on the numbers computed with these settings.
 monitoring:
   pushgateway: "pushgateway:9091"   # batch jobs push metrics here; empty to disable
-  timezone: "Asia/Tehran"           # scheduled times are stored in this local time
   lookback_days: 7                  # live performance and drift use this many recent days
   outcome_delay_hours: 3            # a flight's actual time is final this long after its schedule
   min_daily_outcomes: 30            # fewer matched flights in a day give no live metrics for it

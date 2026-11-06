@@ -2,7 +2,10 @@
 
 Runs every 3 hours: each airport page shows a rolling window of about a day, so scraping
 once a day misses flights and their final status. The upsert keeps the latest status and
-actual time of each flight, so re-running is safe.
+actual time of each flight, and loading the same scrape twice changes nothing.
+
+Every fetched page is kept under data/raw_html; a page that couldn't be fetched or parsed
+lets the other airports load, then fails the run in check_pages.
 """
 
 from datetime import datetime, timedelta
@@ -10,7 +13,13 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-from aeroscrape.pipeline.ingest_tasks import task_cleanup, task_load, task_scrape, task_validate_scrape
+from aeroscrape.pipeline.ingest_tasks import (
+    task_check_pages,
+    task_cleanup,
+    task_load,
+    task_scrape,
+    task_validate_scrape,
+)
 from aeroscrape.pipeline.watcher import fail_run
 
 with DAG(
@@ -26,8 +35,9 @@ with DAG(
     scrape = PythonOperator(task_id="scrape", python_callable=task_scrape)
     validate = PythonOperator(task_id="validate", python_callable=task_validate_scrape)
     load = PythonOperator(task_id="load", python_callable=task_load)
+    check_pages = PythonOperator(task_id="check_pages", python_callable=task_check_pages)
     cleanup = PythonOperator(task_id="cleanup", python_callable=task_cleanup, trigger_rule="all_done")
     watcher = PythonOperator(task_id="watcher", python_callable=fail_run, trigger_rule="one_failed")
 
-    scrape >> validate >> load >> cleanup
-    [scrape, validate, load] >> watcher
+    scrape >> validate >> load >> check_pages >> cleanup
+    [scrape, validate, load, check_pages] >> watcher

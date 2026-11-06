@@ -2,9 +2,11 @@
 
 import logging
 import os
+from datetime import datetime
 from functools import cache
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 from dotenv import load_dotenv
@@ -72,6 +74,12 @@ def get_app_config() -> dict[str, Any]:
 
     logger.info("Application configuration loaded from %s", project_root() / CONFIG_FILENAME)
     return config
+
+
+def local_now(config: dict[str, Any] | None = None) -> datetime:
+    """Now in the flight boards' timezone (`timezone` in config.yaml), as a naive datetime."""
+    tz = (config or get_app_config()).get("timezone", "Asia/Tehran")
+    return datetime.now(ZoneInfo(tz)).replace(tzinfo=None)
 
 
 def get_db_settings() -> dict[str, str]:

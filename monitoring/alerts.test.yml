@@ -66,3 +66,15 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning, job: monitor_performance, model_version: "5"}
             exp_annotations: {summary: "Only 60% of flights fell inside the 10-90% range (target 80%)."}
+
+  - name: a page that failed fires with its airport
+    interval: 1m
+    input_series:
+      - {series: 'scrape_page_failed{job="ingest_scrape", airport="فرودگاه یزد"}', values: '1'}
+      - {series: 'scrape_page_failed{job="ingest_scrape", airport="فرودگاه مشهد"}', values: '0'}
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: ScrapePageFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, job: ingest_scrape, airport: "فرودگاه یزد"}
+            exp_annotations: {summary: "The board of فرودگاه یزد couldn't be fetched after retries, or its layout changed."}

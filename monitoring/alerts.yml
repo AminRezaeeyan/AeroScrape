@@ -43,11 +43,17 @@ groups:
         annotations:
           summary: "The last scrape got no rows from {{ $labels.airport }}, which had flights this week."
 
+      - alert: ScrapePageFailed
+        expr: scrape_page_failed == 1
+        labels: {severity: warning}
+        annotations:
+          summary: "The board of {{ $labels.airport }} couldn't be fetched after retries, or its layout changed."
+
       - alert: ScrapeValidationFailed
         expr: ingest_validation_failed == 1
         labels: {severity: warning}
         annotations:
-          summary: The last scrape failed validation; the site layout may have changed.
+          summary: The last scrape failed its data contract or had too few rows; nothing was loaded.
 
       - alert: IngestStale
         expr: time() - ingest_last_success_timestamp_seconds > 7 * 3600

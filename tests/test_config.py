@@ -45,3 +45,13 @@ def test_loading_config_does_not_need_database_settings(tmp_path: Path, monkeypa
     assert config.get_app_config()["mlflow"]["tracking_uri"] == "x"
     with pytest.raises(ValueError, match="DB_NAME"):
         config.get_db_settings()
+
+
+def test_local_now_is_naive_board_time() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from aeroscrape.config import local_now
+
+    now = local_now({"timezone": "Asia/Tehran"})
+    assert now.tzinfo is None
+    assert abs(now - (datetime.now(UTC) + timedelta(hours=3, minutes=30)).replace(tzinfo=None)) < timedelta(minutes=1)

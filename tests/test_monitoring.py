@@ -287,13 +287,18 @@ def test_pushing_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     assert push_gauges("job", values) is False
 
 
-def test_scrape_metrics_report_airports_that_returned_nothing() -> None:
-    flights = pd.DataFrame({"airport": ["فرودگاه مهرآباد", "فرودگاه مهرآباد", "فرودگاه شيراز"]})
-    values = {
-        v.labels["airport"]: v.value
-        for v in scrape_metrics(flights, ["فرودگاه مهرآباد", "فرودگاه شيراز", "فرودگاه زابل"])
-    }
-    assert values == {"فرودگاه مهرآباد": 2, "فرودگاه شیراز": 1, "فرودگاه زابل": 0}
+def test_scrape_metrics_report_every_airport_and_its_failures() -> None:
+    from aeroscrape.scraping.scraper import PageResult
+
+    pages = [
+        PageResult("فرودگاه مهرآباد", "u", "ok", rows=244),
+        PageResult("فرودگاه شيراز", "u", "fetch_failed"),
+        PageResult("فرودگاه زابل", "u", "ok", rows=0),
+    ]
+    values = {(v.name, v.labels["airport"]): v.value for v in scrape_metrics(pages)}
+    assert values[("scraped_rows", "فرودگاه مهرآباد")] == 244
+    assert values[("scrape_page_failed", "فرودگاه شیراز")] == 1  # normalized spelling
+    assert values[("scrape_page_failed", "فرودگاه زابل")] == 0 and values[("scraped_rows", "فرودگاه زابل")] == 0
 
 
 def test_retraining_needs_a_sustained_degradation_or_drift() -> None:
