@@ -35,10 +35,27 @@ def load_raw_flights(config: dict[str, Any], include_database: bool | None = Non
     return pd.concat(parts, ignore_index=True)
 
 
-def build_dataset(config: dict[str, Any], output: str | Path, include_database: bool | None = None) -> CleaningAudit:
+def load_cleaned_flights(
+    config: dict[str, Any], audit: CleaningAudit | None = None, include_database: bool | None = None
+) -> tuple[pd.DataFrame, list[Path]]:
+    """Cleaned flights from the configured sources, and the raw files they came from (for lineage)."""
+    audit = audit or CleaningAudit()
+    bts = config["data_sources"].get("bts")
+    if bts:
+        from aeroscrape.scraping.bts import load_bts_flights
+
+        return load_bts_flights(bts["months"], bts.get("airports"), resolve_path(bts["cache_dir"]), audit)
+    archive = config["data_sources"].get("archive")
+    files = [resolve_path(archive)] if archive else []
+    return clean_flights(load_raw_flights(config, include_database), audit), files
+
+
+def build_dataset(
+    config: dict[str, Any], output: str | Path, include_database: bool | None = None
+) -> tuple[CleaningAudit, list[Path]]:
     """Clean every flight from the configured sources into one file for a training run."""
     audit = CleaningAudit()
-    flights = clean_flights(load_raw_flights(config, include_database), audit)
+    flights, files = load_cleaned_flights(config, audit, include_database)
     flights.to_csv(output, index=False, encoding="utf-8-sig")
     logger.info("Wrote %d cleaned flights to %s", len(flights), output)
-    return audit
+    return audit, files

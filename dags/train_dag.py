@@ -41,6 +41,11 @@ with DAG(
             type=["null", "string"],
             description="Train on this raw CSV (relative to the project root) instead of the configured sources.",
         ),
+        "source": Param(
+            "iran_fids",
+            enum=["iran_fids", "bts"],
+            description="Data source profile from config.yaml: the Iranian boards or US BTS data.",
+        ),
         "train_fraction": Param(
             1.0,
             type="number",

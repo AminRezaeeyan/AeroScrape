@@ -85,3 +85,25 @@ def get_db_settings() -> dict[str, str]:
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}. Check your .env file.")
     return {name: os.environ[name] for name in DB_ENV_VARS}
+
+
+def apply_profile(config: dict[str, Any], profile: str | None) -> dict[str, Any]:
+    """Return a copy of `config` with `profiles.<profile>` merged over it (None or "iran_fids" = no change).
+
+    Profiles let one pipeline run on another data source, e.g. `SOURCE=bts`, without a second config file.
+    """
+    if not profile or profile == config.get("data_source", "iran_fids"):
+        return config
+    profiles = config.get("profiles", {})
+    if profile not in profiles:
+        raise KeyError(f"Unknown data source profile {profile!r}; defined: {sorted(profiles)}")
+    return _deep_merge(config, profiles[profile]) | {"data_source": profile}
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        merged[key] = (
+            _deep_merge(base[key], value) if isinstance(value, dict) and isinstance(base.get(key), dict) else value
+        )
+    return merged

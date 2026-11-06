@@ -53,7 +53,7 @@ def ablation_steps(config: dict[str, Any]) -> list[tuple[str, FeatureSet]]:
 def make_model_frame(flights: pd.DataFrame, config: dict[str, Any], audit: CleaningAudit | None = None) -> pd.DataFrame:
     """Training rows (departed domestic departures) with every feature and both targets."""
     pipeline_cfg = config["pipeline"]
-    rows = select_training_rows(flights, audit)
+    rows = select_training_rows(flights, audit, pipeline_cfg.get("training_airports"))
     frame = build_features(rows, flights, FeatureSettings.from_config(config))
     frame[pipeline_cfg["target_classification"]] = (
         frame[pipeline_cfg["target_regression"]] > pipeline_cfg["delay_threshold_minutes"]

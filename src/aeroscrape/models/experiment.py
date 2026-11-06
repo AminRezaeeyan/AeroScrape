@@ -33,8 +33,9 @@ from matplotlib.figure import Figure
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 
-from aeroscrape.config import get_app_config, resolve_path
+from aeroscrape.config import apply_profile, get_app_config, resolve_path
 from aeroscrape.data.clean import CleaningAudit, clean_flights_file, read_flights
+from aeroscrape.data.sources import load_cleaned_flights
 from aeroscrape.data.split import Splits, recent_cut_dates, time_split
 from aeroscrape.features.preprocess import (
     FeatureSet,
@@ -503,7 +504,8 @@ def _calibration_section(
 
 
 def _segment(test: pd.DataFrame) -> dict[str, pd.Series]:
-    airports = test["airport"].where(test["airport"].isin(["فرودگاه مهرآباد", "فرودگاه مشهد"]), "other airports")
+    busiest = test["airport"].value_counts().index[:2]
+    airports = test["airport"].where(test["airport"].isin(busiest), "other airports")
     top_airlines = test["airline"].value_counts().index[:5]
     return {
         "Airport": airports,
@@ -599,6 +601,16 @@ def _ablation_section(splits: Splits, config: dict[str, Any], indices: np.ndarra
     ]
 
 
+COVERAGE_NOTES = {
+    "iran_fids": "Aircraft registrations are published only for Mehrabad departures, so rotation and live "
+    "features exist mostly there. Inbound landing times are missing from the 2025 scrapes, so the inbound "
+    "delay features are empty until newly scraped data fills them. Rates are empty for the first days of data.",
+    "bts": "BTS records the tail number of nearly every flight, so rotation and live features exist for most "
+    "departures; they are missing for an aircraft's first flight of the day. Rates are empty for the first "
+    "week of data.",
+}
+
+
 def _coverage_section(splits: Splits, config: dict[str, Any]) -> list[str]:
     groups = config["features"]["groups"]
     rows = ["| Group | Feature | Known in train+val | Known in test |", "| --- | --- | --- | --- |"]
@@ -611,9 +623,7 @@ def _coverage_section(splits: Splits, config: dict[str, Any]) -> list[str]:
     return [
         "## Feature coverage",
         "",
-        "Aircraft registrations are published only for Mehrabad departures, so rotation and live features "
-        "exist mostly there. Inbound landing times are missing from the 2025 scrapes, so the inbound delay "
-        "features are empty until newly scraped data fills them. Rates are empty for the first days of data.",
+        COVERAGE_NOTES.get(config.get("data_source", "iran_fids"), "Share of rows where each feature is known."),
         "",
         *rows,
         "",
@@ -652,14 +662,16 @@ def run_experiment(
     config: dict[str, Any],
     tune: bool | None = None,
     audit: CleaningAudit | None = None,
-    raw_path: str | Path | None = None,
+    raw_path: str | Path | list[Path] | None = None,
 ) -> ExperimentResult:
     splits = make_splits(flights, config, audit)
     params = tune_models(splits, config, enabled=tune)
     return train_and_evaluate(splits, params, config, audit, experiment_lineage(splits, config, raw_path))
 
 
-def experiment_lineage(splits: Splits, config: dict[str, Any], raw_path: str | Path | None) -> dict[str, str]:
+def experiment_lineage(
+    splits: Splits, config: dict[str, Any], raw_path: str | Path | list[Path] | None
+) -> dict[str, str]:
     """Lineage of a run; the feature list is the union of every variant's features."""
     features = list(
         dict.fromkeys(c for v in config["features"]["variants"] for c in variant_feature_set(config, v).columns)
@@ -679,24 +691,31 @@ def save_outputs(result: ExperimentResult, report_path: Path) -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    config = get_app_config()
     parser = argparse.ArgumentParser(description="Train, calibrate and evaluate the delay models on a time split.")
-    parser.add_argument("--raw", default=config["data_paths"]["raw_data"], help="Raw scraped CSV")
-    parser.add_argument("--output", default=config["evaluation"]["report_path"], help="Markdown report path")
+    parser.add_argument("--source", default=None, help="Data source profile from config.yaml, e.g. bts")
+    parser.add_argument("--raw", default=None, help="Raw scraped CSV (Iranian data; default: the archive)")
+    parser.add_argument("--output", default=None, help="Markdown report path")
     tuning = parser.add_mutually_exclusive_group()
     tuning.add_argument("--tune", dest="tune", action="store_true", default=None, help="Force tuning on")
     tuning.add_argument("--no-tune", dest="tune", action="store_false", help="Use default parameters")
     args = parser.parse_args()
+    config = apply_profile(get_app_config(), args.source)
 
     audit = CleaningAudit()
-    with tempfile.TemporaryDirectory() as tmp:
-        cleaned_path = Path(tmp) / "cleaned.csv"
-        # Only the cleaning steps go in the audit here; make_splits records the training-row steps
-        audit.steps = clean_flights_file(resolve_path(args.raw), cleaned_path).steps[:3]
-        flights = read_flights(cleaned_path)
+    if config["data_sources"].get("bts"):
+        flights, raw_files = load_cleaned_flights(config, audit)
+    else:
+        # The documented results use the archive only, so they stay reproducible as live data grows
+        raw = resolve_path(args.raw or config["data_paths"]["raw_data"])
+        with tempfile.TemporaryDirectory() as tmp:
+            cleaned_path = Path(tmp) / "cleaned.csv"
+            # Only the cleaning steps go in the audit here; make_splits records the training-row steps
+            audit.steps = clean_flights_file(raw, cleaned_path).steps[:3]
+            flights = read_flights(cleaned_path)
+        raw_files = [raw]
 
-    result = run_experiment(flights, config, tune=args.tune, audit=audit, raw_path=resolve_path(args.raw))
-    output = resolve_path(args.output)
+    result = run_experiment(flights, config, tune=args.tune, audit=audit, raw_path=raw_files)
+    output = resolve_path(args.output or config["evaluation"]["report_path"])
     save_outputs(result, output)
     print(result.report.to_markdown())
     logger.info("Report and charts written to %s", output.parent)

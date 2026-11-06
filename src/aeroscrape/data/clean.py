@@ -212,11 +212,18 @@ def clean_flights(raw: pd.DataFrame, audit: CleaningAudit | None = None) -> pd.D
     return df[columns].sort_values("scheduled_datetime", kind="stable").reset_index(drop=True)
 
 
-def select_training_rows(flights: pd.DataFrame, audit: CleaningAudit | None = None) -> pd.DataFrame:
-    """Domestic departures that departed with a known, plausible delay: the rows we learn from."""
+def select_training_rows(
+    flights: pd.DataFrame, audit: CleaningAudit | None = None, airports: list[str] | None = None
+) -> pd.DataFrame:
+    """Domestic departures that departed with a known, plausible delay: the rows we learn from.
+
+    With `airports`, only departures from those airports; other flights still serve as context.
+    """
     audit = audit or CleaningAudit()
     rows = flights[flights["flight_type"] == "Domestic Departure"]
-    audit.record("Domestic departures", len(rows))
+    if airports:
+        rows = rows[rows["airport"].isin(airports)]
+    audit.record("Domestic departures" + (f" from {', '.join(airports)}" if airports else ""), len(rows))
     rows = rows[rows["status"] == FlightStatus.DEPARTED.value]
     audit.record("... with status departed", len(rows))
     rows = rows[rows["actual_datetime"].notna()]

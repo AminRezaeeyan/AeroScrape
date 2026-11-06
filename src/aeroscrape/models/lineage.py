@@ -56,8 +56,18 @@ def frame_sha256(df: pd.DataFrame) -> str:
     return hashlib.sha256(pd.util.hash_pandas_object(df, index=False).to_numpy().tobytes()).hexdigest()
 
 
+def _raw_sha256(raw: str | Path | list[Path] | None) -> str:
+    """Hash of the raw file, or a hash of the files' hashes when the data came from several."""
+    paths = [Path(p) for p in (raw if isinstance(raw, list) else [raw] if raw else [])]
+    if not paths or not all(p.exists() for p in paths):
+        return "unknown"
+    if len(paths) == 1:
+        return file_sha256(paths[0])
+    return hashlib.sha256("".join(file_sha256(p) for p in sorted(paths)).encode()).hexdigest()
+
+
 def collect_lineage(
-    raw_path: str | Path | None,
+    raw_path: str | Path | list[Path] | None,
     splits: Splits,
     features: list[str],
     time_column: str,
@@ -69,7 +79,7 @@ def collect_lineage(
     lineage = {
         "git_commit": commit,
         "git_dirty": dirty,
-        "raw_data_sha256": file_sha256(raw_path) if raw_path and Path(raw_path).exists() else "unknown",
+        "raw_data_sha256": _raw_sha256(raw_path),
         "training_data_sha256": frame_sha256(fit[[*features, *targets]]),
         "training_rows": str(len(fit)),
         "test_rows": str(len(splits.test)),

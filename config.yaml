@@ -94,6 +94,34 @@ data_sources:
   archive: "data/raw/data.csv"
   database: true
 
+# Which data the pipeline runs on. A profile below overrides parts of this file; select one with
+# SOURCE=bts (make evaluate, make train) or the train DAG's "source" parameter.
+data_source: "iran_fids"
+profiles:
+  bts:
+    # US Bureau of Transportation Statistics on-time data for one large hub
+    data_sources:
+      archive: null
+      database: false
+      bts:
+        months: ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"]
+        airports: ["ATL"]
+        cache_dir: "data/bts"
+    pipeline:
+      training_airports: ["ATL"]                   # predict ATL departures; other flights are context
+      model_registry_name: "flight-delay-model-bts"  # never gated against the Iranian model
+      tuning:
+        n_trials_regression: 15
+        n_trials_classification: 8
+        n_trials_lgbm_classification: 12
+      gate:
+        min_gate_rows: 1000
+    evaluation:
+      test_dates: 7
+      val_dates: 7
+      bootstrap_samples: 500
+      report_path: "reports/bts/evaluation.md"
+
 # Association Mining
 association_mining:
   min_support: 0.02

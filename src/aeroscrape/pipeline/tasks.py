@@ -16,7 +16,7 @@ import mlflow
 import pandas as pd
 
 from aeroscrape.analysis.association import find_association_rules
-from aeroscrape.config import get_app_config, resolve_path
+from aeroscrape.config import apply_profile, get_app_config, resolve_path
 from aeroscrape.data.clean import clean_flights_file, read_flights
 from aeroscrape.data.sources import build_dataset
 from aeroscrape.data.split import Splits
@@ -38,6 +38,11 @@ from aeroscrape.models.tune import save_best_params
 logger = logging.getLogger(__name__)
 
 SPLIT_NAMES = ("train", "val", "test")
+
+
+def _config(kwargs) -> dict:
+    """The configuration for this run's data source ("source" DAG parameter)."""
+    return apply_profile(get_app_config(), kwargs["params"].get("source"))
 
 
 def _raw_data_path(kwargs) -> Path:
@@ -79,6 +84,10 @@ def _flat_params(params: TunedParams) -> dict[str, object]:
 
 
 def task_validate_raw_data(**kwargs):
+    """Validate the scraped archive; BTS data has its own fixed format and is checked on load."""
+    if not _config(kwargs)["data_sources"].get("archive") and not kwargs["params"].get("raw_data_path_override"):
+        logger.info("No scraped archive for this source; nothing to validate")
+        return
     raw_path = _raw_data_path(kwargs)
     logger.info("Validating %s", raw_path)
     validate_raw_data(raw_path)
@@ -88,17 +97,19 @@ def task_build_dataset(**kwargs):
     """Clean every flight from the archive and the flight database into this run's directory."""
     cleaned_path = _run_dir(kwargs) / "cleaned.csv"
     if kwargs["params"].get("raw_data_path_override"):
-        audit = clean_flights_file(_raw_data_path(kwargs), cleaned_path)
+        raw_files = [_raw_data_path(kwargs)]
+        audit = clean_flights_file(raw_files[0], cleaned_path)
     else:
-        audit = build_dataset(get_app_config(), cleaned_path)
+        audit, raw_files = build_dataset(_config(kwargs), cleaned_path)
     logger.info("Cleaning audit:\n%s", audit.to_markdown())
     kwargs["ti"].xcom_push(key="cleaned_path", value=str(cleaned_path))
+    kwargs["ti"].xcom_push(key="raw_files", value=[str(p) for p in raw_files])
 
 
 def task_split_data(**kwargs):
     """Split cleaned flights by scheduled time and store each split as Parquet."""
     ti = kwargs["ti"]
-    app_config = get_app_config()
+    app_config = _config(kwargs)
     flights = read_flights(ti.xcom_pull(task_ids="build_dataset", key="cleaned_path"))
     splits = make_splits(flights, app_config)
 
@@ -124,7 +135,7 @@ def task_split_data(**kwargs):
 def task_tune_hyperparameters(**kwargs):
     """Tune with rolling-origin CV on train+val. The test split is never loaded here."""
     ti = kwargs["ti"]
-    app_config = get_app_config()
+    app_config = _config(kwargs)
     paths = ti.xcom_pull(task_ids="split_data", key="split_paths")
     train_val = Splits(train=pd.read_parquet(paths["train"]), val=pd.read_parquet(paths["val"]), test=pd.DataFrame())
     params = tune_models(train_val, app_config)
@@ -151,13 +162,14 @@ def task_train_and_evaluate(**kwargs):
     """Fit, calibrate and evaluate both variants, then log and register the served model."""
     ti = kwargs["ti"]
     _git_from_conf(kwargs)
-    app_config = get_app_config()
+    app_config = _config(kwargs)
     pipeline_cfg = app_config["pipeline"]
     splits = _load_splits(ti.xcom_pull(task_ids="split_data", key="split_paths"))
     with open(ti.xcom_pull(task_ids="tune_hyperparameters", key="best_params_path")) as f:
         params = TunedParams.from_dict(json.load(f))
 
-    lineage = experiment_lineage(splits, app_config, _raw_data_path(kwargs))
+    raw_files = [Path(p) for p in ti.xcom_pull(task_ids="build_dataset", key="raw_files") or []]
+    lineage = experiment_lineage(splits, app_config, raw_files)
     result = train_and_evaluate(splits, params, app_config, lineage=lineage)
     report_md = result.report.to_markdown()
     save_outputs(result, _run_dir(kwargs) / "report" / "evaluation.md")
@@ -215,7 +227,7 @@ def _gate_predictions(model_uri: str, frame: pd.DataFrame, name: str) -> ModelPr
 def task_evaluate_gate(**kwargs):
     """Score champion and challenger, both loaded from the registry, on the same held-out flights."""
     ti = kwargs["ti"]
-    app_config = get_app_config()
+    app_config = _config(kwargs)
     pipeline_cfg, eval_cfg = app_config["pipeline"], app_config["evaluation"]
     splits = _load_splits(ti.xcom_pull(task_ids="split_data", key="split_paths"))
     test = splits.test
@@ -280,13 +292,13 @@ def choose_branch(**kwargs) -> str:
 
 def _record_action(kwargs, action: str) -> None:
     run_id = kwargs["ti"].xcom_pull(task_ids="evaluate_gate", key="gate_run_id")
-    _start_mlflow(get_app_config())
+    _start_mlflow(_config(kwargs))
     with mlflow.start_run(run_id=run_id):
         mlflow.set_tag("action", action)
 
 
 def task_promote(**kwargs):
-    client, name = client_and_name(get_app_config())
+    client, name = client_and_name(_config(kwargs))
     version = kwargs["ti"].xcom_pull(task_ids="train_and_evaluate", key="challenger_version")
     promote(client, name, version, reason=f"passed gate in {kwargs['run_id']}")
     _record_action(kwargs, f"promoted version {version} to production")
@@ -300,7 +312,7 @@ def task_reject(**kwargs):
 
 def task_run_association_mining(**kwargs):
     """FP-Growth association rules over the cleaned departures (exploratory, not used by the models)."""
-    config = get_app_config()
+    config = _config(kwargs)
     cleaned_path = kwargs["ti"].xcom_pull(task_ids="build_dataset", key="cleaned_path")
     output_path = _run_dir(kwargs) / config["association_mining"]["results"]["association_rules_filename"]
     find_association_rules(

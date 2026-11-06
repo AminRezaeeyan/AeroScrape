@@ -34,3 +34,9 @@ def test_a_failed_task_fails_the_run(dagbag, dag_id: str) -> None:
     assert watcher.trigger_rule == "one_failed"
     main_tasks = {t.task_id for t in dag.tasks} - {"watcher", "cleanup"}
     assert watcher.upstream_task_ids == main_tasks
+
+
+def test_training_can_run_on_either_data_source(dagbag) -> None:
+    source = dagbag.get_dag("train_delay_model").params.get_param("source")
+    assert source.value == "iran_fids"
+    assert set(source.schema["enum"]) == {"iran_fids", "bts"}
