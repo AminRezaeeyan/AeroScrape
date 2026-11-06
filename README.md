@@ -22,6 +22,8 @@ Both variants beat the baselines on every metric, by modest margins. Most of the
 
 ![Reliability on test](docs/results/reliability.png)
 
+**The same pipeline on US data.** `SOURCE=bts` runs every step unchanged on the Bureau of Transportation Statistics on-time data for Atlanta, which has the aircraft tail number on nearly every flight, plus a learning curve of error against weeks of training data. Results are pending the download, which BTS blocked from the development network; see [docs/bts.md](docs/bts.md) for the commands.
+
 How the outputs are produced, calibrated and checked, including error analysis by segment: [docs/modeling.md](docs/modeling.md). Features and the ablation: [docs/features.md](docs/features.md). The first version of this project reported better-looking numbers from a random split and tuned on the test set; with an honest evaluation and the original features, it did not beat these baselines.
 
 ## Table of Contents
