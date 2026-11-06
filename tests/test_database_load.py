@@ -50,7 +50,7 @@ def test_loading_the_same_flights_twice_does_not_duplicate() -> None:
     db.insert_flights_from_dataframe(df, base_date=datetime(2026, 11, 1))
     second = db.insert_flights_from_dataframe(df, base_date=datetime(2026, 11, 1))
 
-    assert second.inserted == 2
+    assert (second.inserted, second.unchanged) == (0, 2)  # the same scrape again changes nothing
     with db.get_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM departures WHERE flight_number IN ('TST010', 'TST011')")
         assert cur.fetchone()[0] == 2
@@ -81,3 +81,21 @@ def test_fetch_flights_returns_the_scraped_format_for_a_time_window() -> None:
         "airport",
         "flight_type",
     ]
+
+
+def test_a_changed_status_updates_the_flight_and_its_timestamp() -> None:
+    db = Database()
+    db.insert_flights_from_dataframe(pd.DataFrame([_departure("TST030")]), base_date=datetime(2026, 11, 1))
+    with db.get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT updated_at FROM departures WHERE flight_number = 'TST030'")
+        first = cur.fetchone()[0]
+
+    changed = db.insert_flights_from_dataframe(
+        pd.DataFrame([_departure("TST030", status="پرواز کرد 06:41")]), base_date=datetime(2026, 11, 1)
+    )
+
+    assert (changed.inserted, changed.unchanged) == (1, 0)
+    with db.get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT status, updated_at FROM departures WHERE flight_number = 'TST030'")
+        status, updated = cur.fetchone()
+    assert status == "پرواز کرد 06:41" and updated > first

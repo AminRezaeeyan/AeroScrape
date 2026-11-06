@@ -59,6 +59,7 @@ ingest:  ## Scrape the flight boards now (the ingest DAG also runs every 3 hours
 migrate:  ## Create tables and roles added since the database was first initialized (safe to repeat)
 	docker compose up -d db
 	docker compose exec db bash /docker-entrypoint-initdb.d/40_create_monitoring.sh
+	docker compose exec db sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f /docker-entrypoint-initdb.d/50_add_flight_updated_at.sql'
 
 monitor:  ## Run the monitor DAG now: outcomes, live performance, drift, maybe retraining
 	docker compose exec airflow-scheduler airflow dags unpause $(MONITOR_DAG)

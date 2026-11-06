@@ -49,7 +49,13 @@ _UPSERT_TEMPLATE = """
         aircraft = EXCLUDED.aircraft,
         is_international = EXCLUDED.is_international,
         {place} = EXCLUDED.{place},
-        airline = EXCLUDED.airline
+        airline = EXCLUDED.airline,
+        updated_at = now()
+    -- Only when something changed, so loading the same scrape again changes nothing
+    WHERE ({table}.status, {table}.counter, {table}.actual_time, {table}.register, {table}.aircraft,
+           {table}.is_international, {table}.{place}, {table}.airline)
+        IS DISTINCT FROM (EXCLUDED.status, EXCLUDED.counter, EXCLUDED.actual_time, EXCLUDED.register,
+           EXCLUDED.aircraft, EXCLUDED.is_international, EXCLUDED.{place}, EXCLUDED.airline)
 """
 UPSERT_SQL = {
     "arrivals": _UPSERT_TEMPLATE.format(table="arrivals", place="origin"),
@@ -68,13 +74,17 @@ def _clean(value: Any) -> str | None:
 @dataclass
 class InsertResult:
     total: int = 0
-    inserted: int = 0
+    inserted: int = 0  # new flights, or flights whose status, times or other fields changed
+    unchanged: int = 0  # already stored exactly like this
     failed: int = 0
     skipped: Counter[str] = field(default_factory=Counter)
 
     def summary(self) -> str:
         skipped = ", ".join(f"{reason}: {n}" for reason, n in self.skipped.most_common()) or "none"
-        return f"{self.inserted}/{self.total} upserted, {self.failed} rejected by the database, skipped ({skipped})"
+        return (
+            f"{self.inserted}/{self.total} new or changed, {self.unchanged} unchanged, "
+            f"{self.failed} rejected by the database, skipped ({skipped})"
+        )
 
 
 class Database:
@@ -326,6 +336,7 @@ class Database:
                             cur, values["airport"]
                         )
                         cur.execute(UPSERT_SQL[table], {**values, "airport_id": airport_id})
+                        changed = cur.rowcount > 0
                         cur.execute("RELEASE SAVEPOINT flight_row")
                     except psycopg2.Error as db_err:
                         cur.execute("ROLLBACK TO SAVEPOINT flight_row")
@@ -333,7 +344,10 @@ class Database:
                         logger.error("Database rejected flight %s: %s", values["flight_number"], db_err)
                         continue
                     airport_ids[values["airport"]] = airport_id
-                    result.inserted += 1
+                    if changed:
+                        result.inserted += 1
+                    else:
+                        result.unchanged += 1
 
         logger.info("Flight upsert finished: %s", result.summary())
         return result

@@ -56,7 +56,10 @@ jobs:
         run: |
           psql -U ci -d flights -v ON_ERROR_STOP=1 -f init/10_init_db.sql
           for script in init/20_*.sh init/30_*.sh init/40_*.sh; do bash "$script"; done
-          bash init/40_create_monitoring.sh  # make migrate runs it on existing databases: must be repeatable
+          psql -U ci -d flights -v ON_ERROR_STOP=1 -f init/50_add_flight_updated_at.sql
+          # make migrate runs these on existing databases: they must be repeatable
+          bash init/40_create_monitoring.sh
+          psql -U ci -d flights -v ON_ERROR_STOP=1 -f init/50_add_flight_updated_at.sql
       - name: Ruff lint
         run: uv run --frozen ruff check .
       - name: Ruff format

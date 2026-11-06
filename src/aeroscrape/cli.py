@@ -97,7 +97,7 @@ def run_data_operations() -> int:
         return 1
 
     # Skipped rows are expected (e.g. a flight with no airline yet); rejected rows or an empty load are not
-    if result.failed or result.inserted == 0:
+    if result.failed or result.inserted + result.unchanged == 0:
         logger.error("Flight load failed: %s", result.summary())
         return 1
     return 0
