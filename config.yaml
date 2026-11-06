@@ -166,6 +166,27 @@ features:
 serving:
   registry_poll_seconds: 120   # how often the API checks whether a new model was promoted
 
+# Monitoring (aeroscrape.monitoring, the monitor_model DAG). Prometheus alert rules in
+# monitoring/alerts.yml act on the numbers computed with these settings.
+monitoring:
+  pushgateway: "pushgateway:9091"   # batch jobs push metrics here; empty to disable
+  timezone: "Asia/Tehran"           # scheduled times are stored in this local time
+  lookback_days: 7                  # live performance and drift use this many recent days
+  outcome_delay_hours: 3            # a flight's actual time is final this long after its schedule
+  min_daily_outcomes: 30            # fewer matched flights in a day give no live metrics for it
+  mae_tolerance: 0.25               # a day is "degraded" when live MAE exceeds offline MAE by 25%
+  drift:
+    features: ["airline", "Scheduled_Hour_of_Day", "scheduled_turnaround_min", "has_inbound",
+               "airline_delay_rate_7d", "inbound_delay_min"]   # those the served model uses are checked
+    psi_threshold: 0.25             # 0.1 is a moderate shift, 0.25 a large one
+    min_rows: 200                   # recent predictions needed to judge
+    reference_rows: 20000           # sample of the training rows kept as the reference
+  retrain:
+    enabled: true                   # an alert triggers train_delay_model; its gate decides
+    degraded_days: 3                # consecutive degraded days that trigger it
+    cooldown_days: 3                # at most one triggered retraining in this many days
+  retention_days: 90                # predictions older than this are deleted
+
 # Evaluation: split by scheduled time, never at random, so the test set is the future
 evaluation:
   time_column: "scheduled_datetime"
