@@ -22,7 +22,17 @@ Both variants beat the baselines on every metric, by modest margins. Most of the
 
 ![Reliability on test](docs/results/reliability.png)
 
-**The same pipeline on US data.** `SOURCE=bts` runs every step unchanged on the Bureau of Transportation Statistics on-time data for Atlanta, which has the aircraft tail number on nearly every flight, plus a learning curve of error against weeks of training data. Results are pending the download, which BTS blocked from the development network; see [docs/bts.md](docs/bts.md) for the commands.
+### The same pipeline on US data
+
+`SOURCE=bts` runs every step unchanged on the Bureau of Transportation Statistics on-time data for Atlanta (January to May 2026, 118,690 training departures, tested on 6,241), which records the tail number of nearly every flight:
+
+| Dataset | Model | MAE vs best baseline | Brier | PR-AUC |
+| --- | --- | --- | --- | --- |
+| Iran, 3 weeks | 1 h before departure | -1.7 min [-2.6, -0.9] | 0.201 | 0.803 |
+| US BTS, 5 months | 1 h before departure | -5.1 min [-5.5, -4.7] | 0.123 | 0.739 |
+| US BTS, 5 months | at booking | -1.0 min [-1.2, -0.9] | 0.171 | 0.501 |
+
+PR-AUC and Brier depend on how common delays are (60% of Iranian test flights, 26% of BTS ones), so compare each dataset with its own baselines rather than with the other. Delay propagation alone cuts BTS error by 4.8 minutes, and a learning curve shows error levelling off after about 12,000 training departures, roughly seven weeks of Iranian scraping. For the Iranian model, though, registration coverage (a third of departures, against 85% in BTS) limits it more than volume. BTS is US data, so these numbers show what the pipeline can do with enough data, not what the Iranian model will reach. Details: [docs/bts.md](docs/bts.md).
 
 How the outputs are produced, calibrated and checked, including error analysis by segment: [docs/modeling.md](docs/modeling.md). Features and the ablation: [docs/features.md](docs/features.md). The first version of this project reported better-looking numbers from a random split and tuned on the test set; with an honest evaluation and the original features, it did not beat these baselines.
 

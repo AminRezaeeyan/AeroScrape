@@ -52,9 +52,52 @@ make train SOURCE=bts          # the same through Airflow, with the gate and the
 
 [`models/learning_curve.py`](../src/aeroscrape/models/learning_curve.py) trains on the last 1, 2, 4, 8 and 16 weeks before the same test week, with default parameters, and plots test MAE for the model and the airline × time-of-day baseline against the number of training departures. A dashed line marks the size of the Iranian training set (2,887 departures), so the curve answers "how much Iranian data would the model need?" with evidence.
 
-## Status
+## Results
 
-The adapter, profile, learning curve and Airflow parameter are tested against synthetic data in the exact BTS file layout (`tests/bts_synthetic.py`, `tests/test_bts.py`), including a full pipeline run. **Results on real BTS data are pending**: BTS was not reachable from the development machine, so they need `make bts-data` from a network that can reach it.
+Atlanta departures, January to May 2026: 118,690 training departures, tested once on the last week of May (6,241 departures). Full report: [results/bts/evaluation.md](results/bts/evaluation.md). Changes are paired 95% bootstrap intervals against the best baseline.
+
+| Model | MAE (min) | Change vs baseline | Range coverage (target 80%) | Brier | PR-AUC |
+| --- | --- | --- | --- | --- | --- |
+| Best baseline | 19.4 | | 81.9% | 0.194 | 0.296 |
+| At booking | 18.4 | -1.0 [-1.2, -0.9] | 79.0% | 0.171 | 0.501 |
+| 1 h before departure | 14.3 | -5.1 [-5.5, -4.7] | 80.6% | 0.123 | 0.739 |
+
+### What carries the gain
+
+The feature ablation, each row adding one group (paired change in MAE against the first row):
+
+| Features | MAE (min) | Change | PR-AUC |
+| --- | --- | --- | --- |
+| calendar + identity | 19.3 | reference | 0.403 |
+| + rotation | 18.7 | -0.6 [-0.7, -0.5] | 0.407 |
+| + congestion | 19.1 | -0.2 [-0.5, +0.1] | 0.406 |
+| + rates | 18.6 | -0.7 [-0.9, -0.4] | 0.424 |
+| + live propagation | 14.5 | -4.8 [-5.3, -4.4] | 0.662 |
+
+Delay propagation is most of the model: knowing how late the same aircraft's previous flight was cuts error by almost 5 minutes, and departures whose aircraft history is unknown have twice the error (MAE 25.3 against 12.4 one hour before departure). That is the hypothesis this project was built on, confirmed on 40 times more data than the Iranian set. With enough data the schedule features (rotation, 7-day rates) also add a measurable amount, which they did not on three weeks of Iranian data.
+
+### How much data is needed
+
+![Learning curve](results/bts/learning_curve.png)
+
+| Weeks of training | Departures | LightGBM MAE | Change vs baseline |
+| --- | --- | --- | --- |
+| 1 | 6,021 | 15.66 | -3.19 [-3.57, -2.86] |
+| 2 | 12,230 | 14.55 | -4.38 [-4.84, -3.99] |
+| 4 | 24,432 | 14.60 | -4.50 [-4.92, -4.13] |
+| 8 | 48,870 | 14.48 | -4.96 [-5.41, -4.56] |
+| 16 | 94,544 | 14.56 | -4.77 [-5.21, -4.36] |
+
+Error stops improving after about two weeks, around 12,000 departures. Two consequences for the Iranian model:
+
+- **Volume:** its 2,887 training departures sit below the smallest point on this curve. The 2025 scrapes yield about 240 usable departures per scraped day across 26 airports, so with the ingest DAG running every day (about 1,700 a week) it would take roughly seven weeks to reach 12,000.
+- **Coverage matters more than volume:** in BTS 85% of departures have the aircraft's previous delay; in the Iranian data about a third do, because registrations are only published at Mehrabad. More weeks of scraping will not raise that share, so the Iranian model will stay closer to the "at booking" result than to the "1 hour before" one unless more airports publish registrations.
+
+### Calibration and drift
+
+The test week starts on Memorial Day (25 May), when 39% of departures were delayed, and the week as a whole had 26% delayed against 19% in training. Every model's probabilities come out somewhat low on test (reliability chart in the report; expected calibration error 0.028 to 0.049), the same kind of shift the Iranian validation window showed. It is the case for monitoring live calibration (Phase 9) and for the holiday features that are disabled until the Iranian data spans a year.
+
+The 75% precision target for the "likely delayed" flag is too strict for the booking-time model on BTS: with only a quarter of flights delayed, reaching it flags just 1% of flights. The target is a product decision that should be set per market.
 
 ## Limits
 
