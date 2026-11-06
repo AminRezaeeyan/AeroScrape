@@ -85,4 +85,5 @@ check_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]  # lets tests import shared helpers such as tests.bts_synthetic
 addopts = "-ra"
