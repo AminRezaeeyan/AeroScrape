@@ -1,0 +1,82 @@
+# Alert rules. Model-quality thresholds that need history (degraded days, the PSI threshold)
+# are applied by the monitor DAG with the settings in config.yaml; these rules alert on its results.
+# Tested by alerts.test.yml: make check-monitoring
+groups:
+  - name: api
+    rules:
+      - alert: ApiDown
+        expr: up{job="api"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: The prediction API is not answering Prometheus.
+
+      - alert: ApiHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{job="api", status="5xx"}[5m]))
+            / sum(rate(http_requests_total{job="api"}[5m])) > 0.05
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "More than 5% of API requests fail ({{ $value | humanizePercentage }})."
+
+      - alert: ApiSlowP95
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_highr_seconds_bucket{job="api"}[5m]))) > 0.5
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "API p95 latency is {{ $value | humanizeDuration }}, above 500 ms."
+
+      - alert: PredictionLogFailing
+        expr: increase(prediction_log_failures_total[15m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: Predictions are not being logged, so live monitoring has gaps.
+
+  - name: ingest
+    rules:
+      # Some small airports' boards are often empty; alert when one that had flights this week goes quiet
+      - alert: AirportBoardEmpty
+        expr: scraped_rows == 0 and max_over_time(scraped_rows[7d]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "The last scrape got no rows from {{ $labels.airport }}, which had flights this week."
+
+      - alert: ScrapeValidationFailed
+        expr: ingest_validation_failed == 1
+        labels: {severity: warning}
+        annotations:
+          summary: The last scrape failed validation; the site layout may have changed.
+
+      - alert: IngestStale
+        expr: time() - ingest_last_success_timestamp_seconds > 7 * 3600
+        labels: {severity: warning}
+        annotations:
+          summary: No successful flight load for over 7 hours (the ingest DAG runs every 3).
+
+  - name: model
+    rules:
+      - alert: LiveMaeDegraded
+        expr: live_mae_degraded_days >= 3
+        labels: {severity: warning}
+        annotations:
+          summary: "Live MAE has been more than 25% above offline MAE for {{ $value }} days (model {{ $labels.model_version }})."
+
+      - alert: LiveCoverageLow
+        expr: live_interval_coverage < 0.65
+        labels: {severity: warning}
+        annotations:
+          summary: "Only {{ $value | humanizePercentage }} of flights fell inside the 10-90% range (target 80%)."
+
+      - alert: InputDrift
+        expr: drift_features_over_threshold > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} model inputs drifted from the training data; see the drift report."
+
+      - alert: MonitoringStale
+        expr: time() - monitor_performance_last_run_timestamp_seconds > 26 * 3600
+        labels: {severity: warning}
+        annotations:
+          summary: The monitor DAG hasn't run for over a day.

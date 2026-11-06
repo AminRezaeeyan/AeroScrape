@@ -22,6 +22,7 @@ x-airflow-volumes: &airflow-volumes
   - ./mlruns:/mlruns
   - ./data:/opt/aeroscrape/data
   - ./config.yaml:/opt/aeroscrape/config.yaml
+  - ./reports:/opt/aeroscrape/reports
 
 networks:
   flight_network:
@@ -29,6 +30,8 @@ networks:
 
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:
 
 services:
   db:
@@ -44,6 +47,8 @@ services:
       - AIRFLOW_DB_NAME=${AIRFLOW_DB_NAME}
       - AIRFLOW_DB_USER=${AIRFLOW_DB_USER}
       - AIRFLOW_DB_PASSWORD=${AIRFLOW_DB_PASSWORD}
+      - GRAFANA_DB_USER=${GRAFANA_DB_USER:?Set GRAFANA_DB_USER in .env}
+      - GRAFANA_DB_PASSWORD=${GRAFANA_DB_PASSWORD:?Set GRAFANA_DB_PASSWORD in .env}
     volumes:
       - ./init:/docker-entrypoint-initdb.d:ro
       - postgres_data:/var/lib/postgresql/data
@@ -132,7 +137,7 @@ services:
     build: {context: ., target: runtime, args: {EXTRAS: "--extra api"}}
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
-      # Read-only database role for the feature lookup
+      # Reads flights for the feature lookup; may only insert into the prediction log
       DB_HOST: db
       DB_PORT: ${DB_PORT}
       DB_NAME: ${DB_NAME}
@@ -187,3 +192,43 @@ services:
     networks: [flight_network]
     depends_on:
       api: {condition: service_healthy}
+
+  # ---------------------------------------------------------------- monitoring
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks: [flight_network]
+
+  pushgateway:
+    image: prom/pushgateway:v1.9.0
+    ports:
+      - "9091:9091"
+    networks: [flight_network]
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/aeroscrape.json
+      GRAFANA_DB_USER: ${GRAFANA_DB_USER}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+    volumes:
+      - ./monitoring/grafana:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks: [flight_network]
+    depends_on: [prometheus]

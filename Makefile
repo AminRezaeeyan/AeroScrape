@@ -2,6 +2,8 @@ DATA_URL := https://github.com/AminRezaeeyan/AeroScrape/releases/download/data-v
 DATA_SHA256 := 7b9ba6559b9813b8f1c306f4aab33d49c137e7d329d2d1fd3f54846ce7b5919f
 DATA_FILE := data/raw/data.csv
 TRAIN_DAG := train_delay_model
+MONITOR_DAG := monitor_model
+PROMETHEUS_IMAGE := prom/prometheus:v2.53.0
 INGEST_DAG := ingest_flights
 TRAIN_FRACTION ?= 1.0
 SOURCE ?= iran_fids
@@ -9,7 +11,7 @@ USERS ?= 8
 LOADTEST_SECONDS ?= 30
 API_URL ?= http://localhost:8000
 
-.PHONY: setup lint format test loadtest fix-permissions build-offline up-offline data bts-data evaluate learning-curve train ingest rollback model-status up down
+.PHONY: setup lint format test check-monitoring migrate monitor replay loadtest fix-permissions build-offline up-offline data bts-data evaluate learning-curve train ingest rollback model-status up down
 
 setup:  ## Install all dependencies from the lock file and the git hooks
 	uv sync --frozen --all-extras
@@ -26,6 +28,10 @@ format:  ## Fix lint issues and format the code
 
 test:  ## Run the test suite
 	uv run --frozen pytest -q
+
+check-monitoring:  ## Validate the Prometheus config and unit-test the alert rules (needs Docker)
+	docker run --rm --entrypoint promtool -v "$(CURDIR)/monitoring:/m:ro" -w /m $(PROMETHEUS_IMAGE) check config prometheus.yml
+	docker run --rm --entrypoint promtool -v "$(CURDIR)/monitoring:/m:ro" -w /m $(PROMETHEUS_IMAGE) test rules alerts.test.yml
 
 data:  ## Download the raw dataset and verify its checksum
 	mkdir -p $(dir $(DATA_FILE))
@@ -49,6 +55,18 @@ train:  ## Train a challenger and run the promotion gate; TRAIN_FRACTION=0.1 tra
 ingest:  ## Scrape the flight boards now (the ingest DAG also runs every 3 hours once unpaused)
 	docker compose exec airflow-scheduler airflow dags unpause $(INGEST_DAG)
 	docker compose exec airflow-scheduler airflow dags trigger $(INGEST_DAG)
+
+migrate:  ## Create tables and roles added since the database was first initialized (safe to repeat)
+	docker compose up -d db
+	docker compose exec db bash /docker-entrypoint-initdb.d/40_create_monitoring.sh
+
+monitor:  ## Run the monitor DAG now: outcomes, live performance, drift, maybe retraining
+	docker compose exec airflow-scheduler airflow dags unpause $(MONITOR_DAG)
+	docker compose exec airflow-scheduler airflow dags trigger $(MONITOR_DAG)
+
+replay:  ## Send scraped departures to the API as live traffic: DAYS=7, NIGHT=1 moves them to night hours
+	uv run --frozen python tools/replay.py --days $(or $(DAYS),7) $(if $(NIGHT),--night) \
+		--api-key "$$(grep -E '^AEROSCRAPE_API_KEY=' .env | cut -d= -f2-)"
 
 rollback:  ## Serve an earlier model version: make rollback VERSION=7
 	@test -n "$(VERSION)" || (echo "usage: make rollback VERSION=<model version>" && exit 1)

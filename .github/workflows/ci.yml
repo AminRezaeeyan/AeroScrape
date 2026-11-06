@@ -27,6 +27,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       AEROSCRAPE_TEST_DB: "1"
+      AEROSCRAPE_TEST_READER: ci_reader  # password = user name, created below
       DB_HOST: localhost
       DB_PORT: "5432"
       DB_NAME: flights
@@ -41,8 +42,21 @@ jobs:
           enable-cache: true
       - name: Install locked dependencies
         run: uv sync --frozen --all-extras
-      - name: Create the flight tables
-        run: psql -h localhost -U ci -d flights -v ON_ERROR_STOP=1 -f init/10_init_db.sql
+      - name: Create the tables and roles with the init scripts
+        env:
+          PGHOST: localhost
+          POSTGRES_USER: ci
+          POSTGRES_DB: flights
+          APP_DB_USER: ci_app
+          APP_DB_PASSWORD: ci_app
+          READER_DB_USER: ci_reader
+          READER_DB_PASSWORD: ci_reader
+          GRAFANA_DB_USER: ci_grafana
+          GRAFANA_DB_PASSWORD: ci_grafana
+        run: |
+          psql -U ci -d flights -v ON_ERROR_STOP=1 -f init/10_init_db.sql
+          for script in init/20_*.sh init/30_*.sh init/40_*.sh; do bash "$script"; done
+          bash init/40_create_monitoring.sh  # make migrate runs it on existing databases: must be repeatable
       - name: Ruff lint
         run: uv run --frozen ruff check .
       - name: Ruff format
@@ -62,8 +76,12 @@ jobs:
         run: |
           docker build --target runtime --build-arg EXTRAS="--extra api" -t aeroscrape/api:ci .
           docker build --target runtime --build-arg EXTRAS="--extra airflow --extra api" -t aeroscrape/airflow:ci .
+      - name: Prometheus config and alert rule tests
+        run: |
+          docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" -w /m prom/prometheus:v2.53.0 check config prometheus.yml
+          docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" -w /m prom/prometheus:v2.53.0 test rules alerts.test.yml
       - name: Smoke test
         run: |
           docker run --rm aeroscrape/api:ci python -c "import aeroscrape.serving.api"
-          docker run --rm aeroscrape/airflow:ci python -c "import aeroscrape.pipeline.tasks"
+          docker run --rm aeroscrape/airflow:ci python -c "import aeroscrape.pipeline.tasks, aeroscrape.pipeline.monitor_tasks"
           test "$(docker run --rm aeroscrape/api:ci id -u)" != 0  # runs as a non-root user
