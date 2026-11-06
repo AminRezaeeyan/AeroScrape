@@ -99,50 +99,75 @@ class FeatureLookup:
         return pd.concat(parts[::-1]).drop_duplicates(list(FLIGHT_KEY), keep="first").reset_index(drop=True)
 
     def lookup(self, request: dict[str, Any]) -> LookupResult:
-        """Features for a requested domestic departure.
+        """Features for one requested domestic departure; see `lookup_many`."""
+        batch = self.lookup_many([request])
+        return LookupResult(batch.features, batch.matched[0], batch.context_rows)
 
-        `request` has airport, airline, destination_or_origin, aircraft and scheduled_datetime,
-        and optionally flight_number and register. If the flight was scraped, its scraped row
-        (with registration) is used, exactly as training would use it.
+    def lookup_many(self, requests: list[dict[str, Any]]) -> "BatchLookupResult":
+        """Features for requested domestic departures, in request order.
+
+        Each request has airport, airline, destination_or_origin, aircraft and scheduled_datetime,
+        and optionally flight_number and register. If a flight was scraped, its scraped row
+        (with registration) is used, exactly as training would use it. Requests are grouped by
+        date, so each date's flights are fetched and featurized once for the whole batch.
         """
-        scheduled = pd.Timestamp(request["scheduled_datetime"])
-        context = self.context(scheduled)
-        target_raw = pd.DataFrame(
-            [
-                {
-                    "scheduled_time": scheduled.strftime("%Y-%m-%d %H:%M:%S"),
-                    "airline": request.get("airline"),
-                    "flight_number": request.get("flight_number") or "REQUEST",
-                    "destination_or_origin": request.get("destination_or_origin"),
-                    "status": None,
-                    "counter": None,
-                    "actual_time": None,
-                    "register": request.get("register"),
-                    "aircraft": request.get("aircraft"),
-                    "airport": request.get("airport"),
-                    "flight_type": DEPARTURE,
-                }
-            ]
-        )
-        target = clean_flights(target_raw)
+        targets = clean_flights(pd.DataFrame([_raw_target(r, i) for i, r in enumerate(requests)]))
+        # clean_flights sorts by time; restore request order
+        targets = targets.set_index(targets["flight_number"].map(_request_index)).sort_index()
+        named = pd.Series([bool(r.get("flight_number")) for r in requests])
+        targets["flight_number"] = [r.get("flight_number") or "REQUEST" for r in requests]
+        targets.index = pd.RangeIndex(len(requests))
 
-        matched = False
-        if len(context) and request.get("flight_number"):
-            key = target.iloc[0]
-            same = context[
-                (context["flight_type"] == DEPARTURE)
-                & (context["airport"] == key["airport"])
-                & (context["flight_number"] == key["flight_number"])
-                & (context["scheduled_datetime"] == key["scheduled_datetime"])
-            ]
-            if len(same):
-                target, matched = same.head(1).reset_index(drop=True), True
+        features, matched, context_rows = [], pd.Series(False, index=targets.index), 0
+        for _, group in targets.groupby(targets["scheduled_datetime"].dt.normalize()):
+            context = self.context(group["scheduled_datetime"].min())
+            if len(context):
+                departures = context[context["flight_type"] == DEPARTURE].drop_duplicates(list(FLIGHT_KEY))
+                key = ["airport", "flight_number", "scheduled_datetime"]
+                found = group[named[group.index]].reset_index().merge(departures, on=key, suffixes=("_request", ""))
+                for _, row in found.iterrows():
+                    group.loc[row["index"], departures.columns] = row[departures.columns]
+                    matched[row["index"]] = True
+            # Training sees each departure in its own context, so requested flights are added if missing
+            full = pd.concat([context, group]) if len(context) else group
+            full = full.drop_duplicates(list(FLIGHT_KEY), keep="first").reset_index(drop=True)
+            built = build_features(group.reset_index(drop=True), full, self.settings)
+            features.append(built.set_index(group.index))
+            context_rows += len(full)
+        return BatchLookupResult(pd.concat(features).sort_index(), matched.tolist(), context_rows)
 
-        # Training sees each departure in its own context, so the request's flight is added if missing
-        full = pd.concat([context, target]) if len(context) else target
-        full = full.drop_duplicates(list(FLIGHT_KEY), keep="first").reset_index(drop=True)
-        features = build_features(target, full, self.settings)
-        return LookupResult(features, matched, len(full))
+
+@dataclass
+class BatchLookupResult:
+    features: pd.DataFrame  # one row per request, in request order
+    matched: list[bool]  # whether each requested flight was found among scraped flights
+    context_rows: int
+
+
+_PLACEHOLDER = "REQUEST-"
+
+
+def _raw_target(request: dict[str, Any], index: int) -> dict[str, Any]:
+    """A requested flight in the raw scraped format. Each gets a unique placeholder number while
+    cleaning, so two requests for unnamed flights at the same time aren't merged as duplicates."""
+    scheduled = pd.Timestamp(request["scheduled_datetime"])
+    return {
+        "scheduled_time": scheduled.strftime("%Y-%m-%d %H:%M:%S"),
+        "airline": request.get("airline"),
+        "flight_number": f"{_PLACEHOLDER}{index}",
+        "destination_or_origin": request.get("destination_or_origin"),
+        "status": None,
+        "counter": None,
+        "actual_time": None,
+        "register": request.get("register"),
+        "aircraft": request.get("aircraft"),
+        "airport": request.get("airport"),
+        "flight_type": DEPARTURE,
+    }
+
+
+def _request_index(placeholder: str) -> int:
+    return int(placeholder.removeprefix(_PLACEHOLDER))
 
 
 def settings_from(config: dict[str, Any]) -> FeatureSettings:

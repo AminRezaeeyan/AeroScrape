@@ -77,3 +77,19 @@ def test_unscraped_flight_still_gets_features(raw, training_rows) -> None:
     assert not result.matched_flight
     assert result.features.loc[0, "airline_delay_rate_7d"] == pytest.approx(row["airline_delay_rate_7d"])
     assert pd.isna(result.features.loc[0, "scheduled_turnaround_min"])  # no registration, no rotation
+
+
+def test_batched_lookup_equals_training_features(raw, training_rows) -> None:
+    columns = variant_feature_set(get_app_config(), "pre_departure").columns
+    lookup = FeatureLookup(FrameSource(raw), FeatureSettings.from_config(get_app_config()))
+    requests = [_request(row) for _, row in training_rows.iterrows()]
+    requests.append(_request(training_rows.iloc[0], flight_number=None, register=None))  # unnamed flight
+
+    result = lookup.lookup_many(requests)
+
+    assert result.matched == [True] * len(training_rows) + [False]
+    pd.testing.assert_frame_equal(
+        result.features[columns].iloc[:-1].reset_index(drop=True),
+        training_rows[columns].reset_index(drop=True),
+        check_dtype=False,
+    )
