@@ -1,5 +1,7 @@
 # AeroScrape: End-to-End Flight Delay Prediction MLOps Pipeline
 
+[![CI](https://github.com/AminRezaeeyan/AeroScrape/actions/workflows/ci.yml/badge.svg)](https://github.com/AminRezaeeyan/AeroScrape/actions/workflows/ci.yml)
+
 AeroScrape is a comprehensive MLOps (Machine Learning Operations) project designed to scrape real-time flight data, store it, train machine learning models to predict flight delays, and serve these predictions via a RESTful API. The entire pipeline is orchestrated using Apache Airflow, tracks experiment iterations via MLflow, and provides real-time explanations for predictions using SHAP (Explainable AI), served on a clean Streamlit interface.
 
 ![Airflow Tasks Screenshot](docs/screenshots/airflow-tasks.png)
@@ -271,6 +273,26 @@ Our pipeline maps the numerical and categorical components to illustrate positiv
 _SHAP breakdown of factors increasing or reducing delays alongside an interactive feature impact bar chart._
 
 ---
+
+## Testing
+
+`make test` runs the suite (about 130 tests, under a minute); CI runs it on every push and pull request together with ruff, mypy and a Docker build ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests target what breaks silently rather than a coverage number:
+
+| What | Where |
+| --- | --- |
+| Scraper parsing on real FIDS pages (an airport with international flights and a domestic-only one) | `tests/test_scraper.py` |
+| Cleaning, status parsing, date handling and the raw data contract | `tests/test_clean.py`, `tests/test_data_pipeline.py` |
+| Each feature's value, and that rates never see the flight's own day or later (leakage) | `tests/test_features.py` |
+| Train/serve parity: 50 flights get identical features through the training and API paths | `tests/test_parity.py` |
+| End-to-end training on a 200-row fixture, tuning never reading the test split | `tests/test_experiment.py` |
+| The served MLflow model, its signature, calibration, threshold and intervals | `tests/test_delay_model.py` |
+| The promotion gate's decisions and registry rollback | `tests/test_gate.py`, `tests/test_registry.py` |
+| API responses, errors, the feature lookup and hot swap | `tests/test_api.py` |
+| Database upserts and reads against a real Postgres (CI service; locally with `AEROSCRAPE_TEST_DB=1`) | `tests/test_database_load.py` |
+| DAG imports and structure | `tests/test_dags.py` |
+| The BTS adapter, on synthetic data in the exact BTS file layout | `tests/test_bts.py` |
+
+The Airflow task wrappers are covered by running the DAGs in Docker rather than by unit tests.
 
 ## Usage Workflow
 
