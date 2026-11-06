@@ -63,3 +63,18 @@ def test_unknown_header_raises(page: BeautifulSoup) -> None:
     page.find("div", id="output").find("th", class_="airlineinfo").find("a").string = "something new"
     with pytest.raises(LayoutChangedError, match="something new"):
         scrape_table(page, "output", AIRPORT)
+
+
+MEHRABAD_PAGE = Path(__file__).parent / "fixtures" / "fids_mehrabad.html"
+
+
+def test_domestic_only_airport_has_no_international_tables() -> None:
+    page = BeautifulSoup(MEHRABAD_PAGE.read_text(encoding="utf-8"), "html.parser")
+
+    arrivals = scrape_table(page, "input", "فرودگاه مهرآباد")
+    departures = scrape_table(page, "output", "فرودگاه مهرآباد")
+
+    assert len(arrivals) == 3 and len(departures) == 3
+    assert all(f["scheduled_time"] and f["flight_number"] for f in arrivals + departures)
+    assert scrape_table(page, "internal", "فرودگاه مهرآباد") == []
+    assert scrape_table(page, "external", "فرودگاه مهرآباد") == []

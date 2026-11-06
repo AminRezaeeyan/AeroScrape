@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, types and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      # Disposable Postgres for the database tests (tests/test_database_load.py)
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: flights
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d flights"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      AEROSCRAPE_TEST_DB: "1"
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: flights
+      DB_USER: ci
+      DB_PASSWORD: ci
+      PGPASSWORD: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.3"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --frozen --all-extras
+      - name: Create the flight tables
+        run: psql -h localhost -U ci -d flights -v ON_ERROR_STOP=1 -f init/10_init_db.sql
+      - name: Ruff lint
+        run: uv run --frozen ruff check .
+      - name: Ruff format
+        run: uv run --frozen ruff format --check .
+      - name: Mypy
+        run: uv run --frozen mypy
+      - name: Tests
+        run: uv run --frozen pytest -q --cov=aeroscrape --cov-report=term-missing:skip-covered
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -t aeroscrape:ci .
+      - name: Smoke test
+        run: docker run --rm aeroscrape:ci python -c "import aeroscrape.serving.api, aeroscrape.pipeline.tasks"
