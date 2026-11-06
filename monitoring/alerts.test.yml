@@ -18,19 +18,20 @@ tests:
           - exp_labels: {severity: critical}
             exp_annotations: {summary: "More than 5% of API requests fail (10%)."}
 
-  - name: a board that goes empty fires; one that is always empty or full doesn't
+  - name: a board empty for 12 hours fires; a quiet night, or a board that is always empty, doesn't
     interval: 3h
     input_series:
-      - {series: 'scraped_rows{job="ingest_scrape", airport="فرودگاه مهرآباد"}', values: '412 398 0'}
-      - {series: 'scraped_rows{job="ingest_scrape", airport="فرودگاه زابل"}', values: '0 0 0'}
-      - {series: 'scraped_rows{job="ingest_scrape", airport="فرودگاه مشهد"}', values: '150 151 149'}
+      # busy, then empty from 6h on; one night-time gap at a small airport; one that's never had flights
+      - {series: 'scraped_rows{job="ingest_scrape", airport="فرودگاه مهرآباد"}', values: '412 398 0 0 0 0 0'}
+      - {series: 'scraped_rows{job="ingest_scrape", airport="فرودگاه یزد"}', values: '10 12 0 0 9 11 10'}
+      - {series: 'scraped_rows{job="ingest_scrape", airport="فرودگاه زابل"}', values: '0 0 0 0 0 0 0'}
     alert_rule_test:
-      - {eval_time: 3h, alertname: AirportBoardEmpty, exp_alerts: []}
-      - eval_time: 6h
+      - {eval_time: 9h, alertname: AirportBoardEmpty, exp_alerts: []}
+      - eval_time: 18h
         alertname: AirportBoardEmpty
         exp_alerts:
           - exp_labels: {severity: warning, job: ingest_scrape, airport: "فرودگاه مهرآباد"}
-            exp_annotations: {summary: "The last scrape got no rows from فرودگاه مهرآباد, which had flights this week."}
+            exp_annotations: {summary: "No rows from فرودگاه مهرآباد for 12 hours, though it had flights this week."}
 
   - name: three degraded days fire, two don't
     interval: 1m

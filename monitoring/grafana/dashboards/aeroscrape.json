@@ -399,7 +399,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Red: no rows. AirportBoardEmpty fires when an airport that had flights this week returns none.",
+      "description": "Red: no rows. Small airports' boards are empty at night; AirportBoardEmpty fires when one that had flights this week shows none for 12 hours.",
       "targets": [
         {
           "datasource": {

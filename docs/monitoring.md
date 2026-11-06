@@ -104,8 +104,9 @@ same handful of numbers. The ~150 lines in `aeroscrape/monitoring/drift.py` are 
 | ApiHighErrorRate | More than 5% of requests return 5xx for 10 minutes |
 | ApiSlowP95 | p95 latency above 500 ms for 10 minutes |
 | PredictionLogFailing | Predictions couldn't be logged in the last 15 minutes |
-| AirportBoardEmpty | An airport that had flights this week returned no rows |
-| ScrapeValidationFailed | The last scrape failed the data contract |
+| AirportBoardEmpty | An airport that had flights this week has returned no rows for 12 hours (boards of small airports are empty at night) |
+| ScrapePageFailed | An airport page couldn't be fetched after retries, or its tables changed |
+| ScrapeValidationFailed | The last scrape failed the data contract or had too few rows |
 | IngestStale | No successful load for 7 hours (the DAG runs every 3) |
 | LiveMaeDegraded | Live MAE more than 25% above offline for 3 days |
 | LiveCoverageLow | Under 65% of flights inside the 10–90% range (target 80%) |
@@ -149,5 +150,5 @@ scraper: the boards publish registrations almost only at Mehrabad ([data-source.
 
 The same ingest run also showed 16 of the 34 airport boards returning no rows. Those boards were
 really empty (tables with headers and no flights), not failures. AirportBoardEmpty
-fires only when an airport that had flights this week goes quiet, so boards that are always empty
-don't page anyone.
+fires only when an airport that had flights this week has shown none for 12 hours, so neither a
+quiet night nor a board that is always empty pages anyone.

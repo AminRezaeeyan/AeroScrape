@@ -31,6 +31,7 @@ networks:
 volumes:
   postgres_data:
   prometheus_data:
+  pushgateway_data:
   grafana_data:
 
 services:
@@ -210,6 +211,10 @@ services:
 
   pushgateway:
     image: prom/pushgateway:v1.9.0
+    # Keep the last pushed values across restarts; otherwise alerts on batch jobs vanish until they run again
+    command: ["--persistence.file=/pushgateway/metrics.db", "--persistence.interval=1m"]
+    volumes:
+      - pushgateway_data:/pushgateway  # the image makes this directory writable for its user
     ports:
       - "9091:9091"
     networks: [flight_network]

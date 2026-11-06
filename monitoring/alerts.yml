@@ -36,12 +36,13 @@ groups:
 
   - name: ingest
     rules:
-      # Some small airports' boards are often empty; alert when one that had flights this week goes quiet
+      # Small airports' boards are empty at night; alert when one that had flights this week has
+      # shown none for 12 hours (four runs), since a board shows about a day of flights
       - alert: AirportBoardEmpty
-        expr: scraped_rows == 0 and max_over_time(scraped_rows[7d]) > 0
+        expr: max_over_time(scraped_rows[12h]) == 0 and max_over_time(scraped_rows[7d]) > 0
         labels: {severity: warning}
         annotations:
-          summary: "The last scrape got no rows from {{ $labels.airport }}, which had flights this week."
+          summary: "No rows from {{ $labels.airport }} for 12 hours, though it had flights this week."
 
       - alert: ScrapePageFailed
         expr: scrape_page_failed == 1
