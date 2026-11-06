@@ -58,7 +58,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Build
-        run: docker build -t aeroscrape:ci .
+      - name: Build the API and Airflow images
+        run: |
+          docker build --target runtime --build-arg EXTRAS="--extra api" -t aeroscrape/api:ci .
+          docker build --target runtime --build-arg EXTRAS="--extra airflow --extra api" -t aeroscrape/airflow:ci .
       - name: Smoke test
-        run: docker run --rm aeroscrape:ci python -c "import aeroscrape.serving.api, aeroscrape.pipeline.tasks"
+        run: |
+          docker run --rm aeroscrape/api:ci python -c "import aeroscrape.serving.api"
+          docker run --rm aeroscrape/airflow:ci python -c "import aeroscrape.pipeline.tasks"
+          test "$(docker run --rm aeroscrape/api:ci id -u)" != 0  # runs as a non-root user

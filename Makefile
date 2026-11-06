@@ -6,7 +6,7 @@ INGEST_DAG := ingest_flights
 TRAIN_FRACTION ?= 1.0
 SOURCE ?= iran_fids
 
-.PHONY: setup lint format test data bts-data evaluate learning-curve train ingest rollback model-status up down
+.PHONY: setup lint format test loadtest fix-permissions build-offline up-offline data bts-data evaluate learning-curve train ingest rollback model-status up down
 
 setup:  ## Install all dependencies from the lock file and the git hooks
 	uv sync --frozen --all-extras
@@ -54,8 +54,20 @@ rollback:  ## Serve an earlier model version: make rollback VERSION=7
 model-status:  ## Show which model versions are production and challenger
 	docker compose exec airflow-scheduler python -m aeroscrape.models.registry status
 
+loadtest:  ## Latency and throughput of the running API (make up first); 30 s per scenario
+	uv run --frozen python tools/loadtest.py --api-key "$$(grep -E '^AEROSCRAPE_API_KEY=' .env | cut -d= -f2-)"
+
+fix-permissions:  ## Give back to you files that older containers wrote as root into mounted folders
+	docker run --rm -v "$(CURDIR):/work" alpine chown -R $$(id -u):$$(id -g) /work/mlruns /work/logs /work/data /work/models
+
 up:  ## Build and start the Docker stack
 	docker compose up -d --build
+
+build-offline:  ## Build the images from the local uv cache when PyPI is unreachable; then `make up-offline`
+	tools/build_offline.sh
+
+up-offline:  ## Start the stack from images already built (e.g. by build-offline)
+	docker compose up -d --no-build
 
 down:  ## Stop the Docker stack
 	docker compose down

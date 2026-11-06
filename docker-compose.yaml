@@ -1,15 +1,38 @@
+# Containers get compose-scoped names (aeroscrape-api-1, ...), so a second checkout or a test
+# stack can't collide with these. Code comes from the images; `make up` rebuilds them.
+
+x-core-image: &core-image
+  image: aeroscrape/core:latest
+  build: {context: ., target: runtime, args: {EXTRAS: ""}}
+
+x-airflow-image: &airflow-image
+  image: aeroscrape/airflow:latest
+  build: {context: ., target: runtime, args: {EXTRAS: "--extra airflow --extra api"}}
+
+x-airflow-env: &airflow-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@db:${DB_PORT}/${AIRFLOW_DB_NAME}
+  AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+
+x-airflow-volumes: &airflow-volumes
+  - ./dags:/opt/airflow/dags
+  - ./logs:/opt/airflow/logs
+  - ./mlruns:/mlruns
+  - ./data:/opt/aeroscrape/data
+  - ./config.yaml:/opt/aeroscrape/config.yaml
+
 networks:
   flight_network:
     driver: bridge
 
 volumes:
   postgres_data:
-  mlflow_artifacts:
 
 services:
   db:
     image: postgres:13
-    container_name: flight_db
     environment:
       - POSTGRES_USER=${DB_ADMIN_USER:?Set DB_ADMIN_USER in .env}
       - POSTGRES_PASSWORD=${DB_ADMIN_PASSWORD:?Set DB_ADMIN_PASSWORD in .env}
@@ -26,8 +49,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "${DB_HOST_PORT:-5433}:5432"
-    networks:
-      - flight_network
+    networks: [flight_network]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -35,51 +57,35 @@ services:
       retries: 5
 
   mlflow:
-    build: .
-    container_name: mlflow_server
+    <<: *core-image
     command: mlflow server --backend-store-uri sqlite:////mlruns/mlruns.db --default-artifact-root /mlruns --host 0.0.0.0
     volumes:
       - ./mlruns:/mlruns
     ports:
       - "5000:5000"
-    networks:
-      - flight_network
-    depends_on:
-      db:
-        condition: service_healthy
+    networks: [flight_network]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   airflow-webserver:
-    build: .
-    container_name: airflow_webserver
+    <<: *airflow-image
     environment:
-      - AIRFLOW_HOME=/opt/airflow
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@db:${DB_PORT}/${AIRFLOW_DB_NAME}
-      - AIRFLOW_ADMIN_USER=${AIRFLOW_ADMIN_USER}
-      - AIRFLOW_ADMIN_PASSWORD=${AIRFLOW_ADMIN_PASSWORD}
-      - AIRFLOW_ADMIN_EMAIL=${AIRFLOW_ADMIN_EMAIL}
-      - AIRFLOW__WEBSERVER__RBAC=True
-      - AIRFLOW__WEBSERVER__WEB_SERVER_PORT=8080
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
-      - AIRFLOW__CORE__LOGGING_LEVEL=INFO
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./logs:/opt/airflow/logs
-      - ./mlruns:/mlruns             
-      - ./data:/opt/airflow/data
-      - ./models:/opt/airflow/models
-      - ./config.yaml:/opt/airflow/config.yaml
-      - ./src:/opt/airflow/src
+      <<: *airflow-env
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL}
+      AIRFLOW__WEBSERVER__WEB_SERVER_PORT: "8080"
+    volumes: *airflow-volumes
     ports:
       - "8080:8080"
-    networks:
-      - flight_network
+    networks: [flight_network]
     depends_on:
-      db:
-        condition: service_healthy
-      mlflow:
-        condition: service_started
+      db: {condition: service_healthy}
+      mlflow: {condition: service_healthy}
     entrypoint:
       - sh
       - -c
@@ -97,115 +103,87 @@ services:
           --email "$${AIRFLOW_ADMIN_EMAIL:-admin@example.com}"
         exec airflow webserver
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
 
   airflow-scheduler:
-    build: .
-    container_name: airflow_scheduler
+    <<: *airflow-image
     environment:
-      - AIRFLOW_HOME=/opt/airflow
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@db:${DB_PORT}/${AIRFLOW_DB_NAME}
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      <<: *airflow-env
       # Ingest loads scraped flights and training reads them, as the limited application role
-      - DB_HOST=db
-      - DB_PORT=${DB_PORT}
-      - DB_NAME=${DB_NAME}
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - AIRFLOW__CORE__LOGGING_LEVEL=INFO
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./logs:/opt/airflow/logs
-      - ./mlruns:/mlruns            
-      - ./data:/opt/airflow/data
-      - ./models:/opt/airflow/models
-      - ./config.yaml:/opt/airflow/config.yaml
-      - ./src:/opt/airflow/src
-    networks:
-      - flight_network
+      DB_HOST: db
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+    volumes: *airflow-volumes
+    networks: [flight_network]
     depends_on:
-      db:
-        condition: service_healthy
-      mlflow:
-        condition: service_started
-      airflow-webserver:
-        condition: service_healthy
+      db: {condition: service_healthy}
+      mlflow: {condition: service_healthy}
+      airflow-webserver: {condition: service_healthy}
     command: airflow scheduler
 
   api:
-    build: .
-    container_name: flight_api
+    image: aeroscrape/api:latest
+    build: {context: ., target: runtime, args: {EXTRAS: "--extra api"}}
     environment:
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       # Read-only database role for the feature lookup
-      - DB_HOST=db
-      - DB_PORT=${DB_PORT}
-      - DB_NAME=${DB_NAME}
-      - DB_USER=${DB_READER_USER}
-      - DB_PASSWORD=${DB_READER_PASSWORD}
-    working_dir: /opt/airflow
+      DB_HOST: db
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_READER_USER}
+      DB_PASSWORD: ${DB_READER_PASSWORD}
+      AEROSCRAPE_API_KEY: ${AEROSCRAPE_API_KEY:?Set AEROSCRAPE_API_KEY in .env}
+      AEROSCRAPE_CORS_ORIGINS: http://localhost:8501
     command: uvicorn aeroscrape.serving.api:app --host 0.0.0.0 --port 8000
     volumes:
-      - ./src:/opt/airflow/src
-      - ./models:/opt/airflow/models
-      - ./mlruns:/mlruns           
-      - ./config.yaml:/opt/airflow/config.yaml
+      - ./mlruns:/mlruns
+      - ./config.yaml:/opt/aeroscrape/config.yaml
     ports:
       - "8000:8000"
-    networks:
-      - flight_network
+    networks: [flight_network]
     depends_on:
-      db:
-        condition: service_healthy
-      mlflow:
-        condition: service_started
+      db: {condition: service_healthy}
+      mlflow: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   scraper:
-    build: .
-    container_name: flight_scraper_cli
+    <<: *core-image
     environment:
-      - DB_HOST=db
-      - DB_PORT=${DB_PORT}
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_NAME=${DB_NAME}
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
-    working_dir: /opt/airflow
+      DB_HOST: db
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
     command: aeroscrape
     volumes:
-      - ./src:/opt/airflow/src
-      - ./data:/opt/airflow/data
-      - ./logs:/opt/airflow/logs
-      - ./mlruns:/mlruns             
-      - ./config.yaml:/opt/airflow/config.yaml
-    networks:
-      - flight_network
+      - ./data:/opt/aeroscrape/data
+      - ./logs:/opt/aeroscrape/logs
+      - ./config.yaml:/opt/aeroscrape/config.yaml
+    networks: [flight_network]
     depends_on:
-      db:
-        condition: service_healthy
-      mlflow:
-        condition: service_started
+      db: {condition: service_healthy}
+    profiles: [manual]  # run with `docker compose run --rm scraper`; the ingest DAG scrapes on schedule
 
   demo:
-    build: .
-    container_name: flight_demo
+    image: aeroscrape/demo:latest
+    build: {context: ., target: runtime, args: {EXTRAS: "--extra ui"}}
     environment:
-      - BACKEND_URL=http://api:8000/predict
-    working_dir: /opt/airflow
-    command: streamlit run src/aeroscrape/demo/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
-    volumes:
-      - ./src:/opt/airflow/src
-      - ./config.yaml:/opt/airflow/config.yaml
+      BACKEND_URL: http://api:8000/v1/predict
+      AEROSCRAPE_API_KEY: ${AEROSCRAPE_API_KEY}
+    command: streamlit run /opt/venv/lib/python3.12/site-packages/aeroscrape/demo/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
     ports:
       - "8501:8501"
-    networks:
-      - flight_network
+    networks: [flight_network]
     depends_on:
-      api:
-        condition: service_started
+      api: {condition: service_healthy}
