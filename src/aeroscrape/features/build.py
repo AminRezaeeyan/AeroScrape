@@ -211,22 +211,25 @@ def _trailing(
     statistic over all keys in the same window: (n * key_stat + m * all_stat) / (n + m).
     """
     hist_dates = history["date"].to_numpy()
-    hist_keys = history[key].to_numpy()
     values = history["value"].to_numpy(dtype=float)
+    hist_keys = history[key]
+    target_keys = target_keys.reset_index(drop=True)
+    target_dates = target_dates.reset_index(drop=True)
     result = np.full(len(target_keys), np.nan)
-    cache: dict[tuple[Any, Any], float] = {}
-    agg = np.mean if stat == "mean" else np.median
-    for i, (k, d) in enumerate(zip(target_keys.to_numpy(), target_dates.to_numpy(), strict=True)):
-        if (k, d) not in cache:
-            in_window = (hist_dates < d) & (hist_dates >= d - np.timedelta64(window_days, "D"))
-            if not in_window.any():
-                cache[(k, d)] = np.nan
-            else:
-                prior = float(agg(values[in_window]))
-                own = values[in_window & (hist_keys == k)]
-                n = len(own)
-                cache[(k, d)] = prior if n == 0 else (n * float(agg(own)) + smoothing * prior) / (n + smoothing)
-        result[i] = cache[(k, d)]
+    # One pass per target date: select that date's window once, then aggregate per key in it
+    for day_key, rows in target_dates.groupby(target_dates).groups.items():
+        day = pd.Timestamp(day_key).to_datetime64()  # type: ignore[arg-type]
+        in_window = (hist_dates < day) & (hist_dates >= day - np.timedelta64(window_days, "D"))
+        if not in_window.any():
+            continue
+        window = pd.Series(values[in_window], index=hist_keys.to_numpy()[in_window])
+        prior = float(window.mean() if stat == "mean" else window.median())
+        grouped = window.groupby(level=0)
+        stats = grouped.mean() if stat == "mean" else grouped.median()
+        counts = grouped.size()
+        smoothed = (counts * stats + smoothing * prior) / (counts + smoothing)
+        keys = target_keys.iloc[rows]
+        result[rows] = keys.map(smoothed).fillna(prior).to_numpy(dtype=float)
     return result
 
 
