@@ -66,12 +66,13 @@ def main() -> None:
     sub.add_parser("status", help="Show the production and challenger versions")
     rollback = sub.add_parser("rollback", help="Make an earlier version the production model")
     rollback.add_argument("version", help="Model version to serve")
+    rollback.add_argument("--reason", default="manual rollback", help="Recorded on the model version")
     args = parser.parse_args()
 
     client, name = client_and_name()
     if args.command == "rollback":
         client.get_model_version(name, args.version)  # fails clearly if the version doesn't exist
-        promote(client, name, args.version, reason="manual rollback")
+        promote(client, name, args.version, reason=args.reason)
     print(status(client, name))
 
 

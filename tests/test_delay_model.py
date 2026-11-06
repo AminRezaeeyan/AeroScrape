@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import mlflow
 import numpy as np
 import pandas as pd
@@ -118,3 +120,19 @@ def test_calibrator_fixes_overconfident_probabilities(method: str) -> None:
         return np.mean((p - y[2000:]) ** 2)
 
     assert brier(fixed) < brier(overconfident[2000:])
+
+
+def test_saved_bundle_does_not_need_dill(bundle: DelayModelBundle, data, tmp_path) -> None:
+    import io
+    import pickletools
+
+    import dill
+
+    dill.extend(True)  # as in Airflow's task runtime, where models are trained
+    mlflow.set_tracking_uri(f"sqlite:///{tmp_path}/mlflow.db")
+    with mlflow.start_run():
+        info = log_delay_model(bundle, data[0].head(5))
+    saved = Path(mlflow.artifacts.download_artifacts(info.model_uri)) / "artifacts" / "bundle.pkl"
+
+    names = {a for _, a, _ in pickletools.genops(io.BytesIO(saved.read_bytes())) if isinstance(a, str)}
+    assert not any("dill" in n for n in names)

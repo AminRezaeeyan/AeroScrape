@@ -6,6 +6,7 @@ MLflow pyfunc with a signature, which makes MLflow reject malformed input.
 """
 
 import logging
+import pickle
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -168,10 +169,15 @@ def _input_feature_of(transformed_names: np.ndarray, features: FeatureSet) -> li
 
 
 class DelayModel(PythonModel):
-    """MLflow wrapper; the bundle itself is stored as a joblib artifact."""
+    """MLflow wrapper; the bundle itself is stored as a pickle artifact."""
 
     def load_context(self, context) -> None:
-        self.bundle: DelayModelBundle = joblib.load(context.artifacts["bundle"])
+        path = context.artifacts["bundle"]
+        if path.endswith(".joblib"):  # versions registered before the switch to plain pickle
+            self.bundle: DelayModelBundle = joblib.load(path)
+        else:
+            with open(path, "rb") as f:
+                self.bundle = pickle.load(f)
 
     def predict(self, context, model_input: pd.DataFrame, params: dict[str, Any] | None = None) -> pd.DataFrame:
         return self.bundle.predict(model_input)
@@ -181,8 +187,12 @@ def log_delay_model(bundle: DelayModelBundle, example: pd.DataFrame, registered_
     """Log the bundle as a pyfunc model with a signature and input example; optionally register it."""
     example = bundle.prepare_input(example)
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "bundle.joblib"
-        joblib.dump(bundle, path)
+        # Written with the C pickler: Airflow loads dill, which installs its own savers in Python's
+        # pure-Python pickler (the one joblib uses), so models saved by joblib in a training task
+        # needed dill to load. The C pickler doesn't use those savers.
+        path = Path(tmp) / "bundle.pkl"
+        with open(path, "wb") as f:
+            pickle.dump(bundle, f, protocol=5)
         return mlflow.pyfunc.log_model(
             name="delay-model",
             python_model=DelayModel(),
