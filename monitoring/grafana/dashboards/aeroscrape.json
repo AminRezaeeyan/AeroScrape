@@ -128,7 +128,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(http_requests_total{job=\"api\", status=\"5xx\"}[5m])) / sum(rate(http_requests_total{job=\"api\"}[5m]))",
+          "expr": "(sum(rate(http_requests_total{job=\"api\", status=\"5xx\"}[5m])) or vector(0)) / sum(rate(http_requests_total{job=\"api\"}[5m]))",
           "legendFormat": "5xx",
           "refId": "A"
         },
@@ -137,7 +137,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(http_requests_total{job=\"api\", status=\"4xx\"}[5m])) / sum(rate(http_requests_total{job=\"api\"}[5m]))",
+          "expr": "(sum(rate(http_requests_total{job=\"api\", status=\"4xx\"}[5m])) or vector(0)) / sum(rate(http_requests_total{job=\"api\"}[5m]))",
           "legendFormat": "4xx",
           "refId": "B"
         }
@@ -150,7 +150,12 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit"
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "axisSoftMax": 0.05
+          }
         },
         "overrides": []
       },
@@ -666,7 +671,9 @@
           "custom": {
             "drawStyle": "line",
             "showPoints": "always",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 7,
+            "lineWidth": 2
           }
         },
         "overrides": [
@@ -690,7 +697,9 @@
           }
         ]
       },
-      "options": {}
+      "options": {},
+      "timeFrom": "14d",
+      "hideTimeOverride": false
     },
     {
       "type": "timeseries",
@@ -737,7 +746,9 @@
           "custom": {
             "drawStyle": "line",
             "showPoints": "always",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 7,
+            "lineWidth": 2
           }
         },
         "overrides": [
@@ -761,7 +772,9 @@
           }
         ]
       },
-      "options": {}
+      "options": {},
+      "timeFrom": "14d",
+      "hideTimeOverride": false
     },
     {
       "type": "timeseries",
@@ -808,7 +821,9 @@
           "custom": {
             "drawStyle": "line",
             "showPoints": "always",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 7,
+            "lineWidth": 2
           }
         },
         "overrides": [
@@ -832,7 +847,9 @@
           }
         ]
       },
-      "options": {}
+      "options": {},
+      "timeFrom": "14d",
+      "hideTimeOverride": false
     },
     {
       "type": "bargauge",
@@ -858,7 +875,7 @@
       ],
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 10,
         "x": 0,
         "y": 38
       },
@@ -915,19 +932,24 @@
           },
           "rawQuery": true,
           "editorMode": "code",
-          "rawSql": "SELECT day, model_version AS version, predicted_flights AS predicted, matched_flights AS matched, round(mae::numeric, 1) AS mae, round(offline_mae::numeric, 1) AS offline_mae, round(brier::numeric, 3) AS brier, round(coverage::numeric, 3) AS coverage, round(no_inbound_share::numeric, 3) AS no_inbound FROM live_metrics_daily ORDER BY day DESC, model_version DESC LIMIT 30",
+          "rawSql": "SELECT to_char(day, 'YYYY-MM-DD') AS day, model_version AS version, predicted_flights AS flights, matched_flights AS matched, round(mae::numeric, 1) AS mae, round(offline_mae::numeric, 1) AS \"offline mae\", round(brier::numeric, 3) AS brier, round(coverage::numeric, 2) AS coverage, round(no_inbound_share::numeric, 2) AS \"no inbound\" FROM live_metrics_daily ORDER BY day DESC, model_version DESC LIMIT 30",
           "format": "table",
           "refId": "A"
         }
       ],
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 14,
+        "x": 10,
         "y": 38
       },
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "custom": {
+            "minWidth": 60,
+            "align": "auto"
+          }
+        },
         "overrides": []
       },
       "options": {}
