@@ -57,10 +57,12 @@ Each DAG run writes its intermediate files (cleaned flights, Parquet splits, tun
 | `POST /v1/reload` | check the registry for a newly promoted model now (it is also polled every 2 minutes) | `X-API-Key` |
 | `GET /health` | liveness: the process is up | none |
 | `GET /ready` | readiness: the model and the feature lookup are loaded (503 otherwise); compose's health check uses it | none |
+| `GET /metrics` | Prometheus metrics: requests and latency per route, flights scored per airport, predicted delay and probability, time in the feature lookup, model and SHAP, unseen categories, the served version | none (keep port 8000 off the internet, or put the API behind a proxy that hides it) |
 
 - **Validation.** `scheduled_datetime` is a datetime, strings have length limits and unknown fields are rejected, all with a 422. A value of airline, airport, destination or aircraft that the model never saw in training is accepted, because the model handles it (it ignores the unknown category), but it is listed in `warnings` instead of being silently zeroed as before.
 - **Explanations are opt-in.** SHAP doubles the cost of a prediction, so `top_factors` is computed only with `?explain=true`.
 - **Errors** return a generic message and the request ID, not the exception text.
+- **Prediction log.** Every scored flight is written to the `predictions` table after the response is sent, for [monitoring](monitoring.md). `X-Traffic-Source: replay` or `loadtest` labels synthetic traffic, and monitoring ignores `loadtest`.
 - **Security.** Prediction routes require `X-API-Key` when `AEROSCRAPE_API_KEY` is set (compose requires it); the comparison is constant-time. CORS allows only the demo's origin. Secrets come only from environment variables.
 
 ## Logs
@@ -71,7 +73,7 @@ The API writes one JSON object per line to stdout. Every request gets an ID, tak
 {"time": "2026-11-06T13:09:05.766+00:00", "level": "INFO", "logger": "aeroscrape.serving.api", "message": "request", "request_id": "e2e-check-1", "method": "POST", "path": "/v1/predict", "status": 200, "latency_ms": 365.3, "model_version": "5", "flights": 1, "explain": true, "mean_p_delay": 0.532, "mean_p50_minutes": 21.3}
 ```
 
-These fields are what the monitoring phase reads; no log parsing with regular expressions.
+Logs are for investigating single requests. Monitoring reads the prediction log and `/metrics` instead (see [monitoring.md](monitoring.md)).
 
 ## Latency under load
 

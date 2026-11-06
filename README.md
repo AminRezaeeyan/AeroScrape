@@ -71,6 +71,7 @@ How the outputs are produced, calibrated and checked, including error analysis b
     * **Model Registry:** Centralized management and versioning of trained models, with automated alias assignment (e.g., to "production").
 * **Explainable AI (SHAP):** Integrates individual feature contributions for every single prediction, identifying factors that decrease or increase flight delays.
 * **Inference Dashboard (Streamlit):** An interactive demo to query predictions and visualize SHAP force contributions on a clean web UI.
+* **Monitoring:** every prediction is logged and matched to the actual delay; live MAE, Brier and coverage are compared with the offline numbers, inputs are checked for drift, and an alert triggers retraining through the promotion gate. Prometheus, Pushgateway and Grafana run in the same Compose stack ([docs/monitoring.md](docs/monitoring.md)).
 
 ## Architecture Overview
 
@@ -83,7 +84,8 @@ The AeroScrape project is built with a modular architecture, separating concerns
 5.  **MLflow Tracking Server:** An MLflow instance (the `mlflow` service in Docker) that serves as a centralized repository for logging ML experiments, tracking metrics, and managing model versions in the Model Registry.
 6.  **Inference API (FastAPI):** A FastAPI application (`aeroscrape.serving.api`) that loads the native ML model from MLflow Model Registry and provides a RESTful endpoint returning predictions along with real-time SHAP values.
 7.  **Inference Dashboard (Streamlit):** A user-friendly web interface (`aeroscrape.demo.streamlit_app`) allowing users to input flight details and examine predicted delays alongside contribution charts.
-8.  **Configuration (`aeroscrape.config`):** A configuration loader that handles both environment variables (`.env`) and structured YAML configuration (`config.yaml`).
+8.  **Monitoring (`aeroscrape.monitoring`):** the API's prediction log, the daily `monitor_model` DAG (outcomes, live performance, drift, retraining), and Prometheus, Pushgateway and Grafana with alert rules and a dashboard committed under `monitoring/`.
+9.  **Configuration (`aeroscrape.config`):** A configuration loader that handles both environment variables (`.env`) and structured YAML configuration (`config.yaml`).
 
 ---
 
@@ -127,6 +129,9 @@ This is the easiest way to launch the entire MLOps environment. All components (
    * **Inference REST API (FastAPI):** `http://localhost:8000` (API Docs at `/docs`)
    * **Orchestrator (Apache Airflow):** `http://localhost:8080`
    * **Experiment Tracking (MLflow Server):** `http://localhost:5000`
+   * **Monitoring (Grafana):** `http://localhost:3000`, user `admin` and `GRAFANA_ADMIN_PASSWORD`; Prometheus at `http://localhost:9090`
+
+   A database created before monitoring existed needs `make migrate` once, for the monitoring tables and roles.
 
 ---
 
@@ -276,7 +281,7 @@ _SHAP breakdown of factors increasing or reducing delays alongside an interactiv
 
 ## Testing
 
-`make test` runs the suite (about 130 tests, under a minute); CI runs it on every push and pull request together with ruff, mypy and a Docker build ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests target what breaks silently rather than a coverage number:
+`make test` runs the suite (about 170 tests, under a minute); CI runs it on every push and pull request together with ruff, mypy and a Docker build ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests target what breaks silently rather than a coverage number:
 
 | What | Where |
 | --- | --- |
@@ -289,6 +294,8 @@ _SHAP breakdown of factors increasing or reducing delays alongside an interactiv
 | The promotion gate's decisions and registry rollback | `tests/test_gate.py`, `tests/test_registry.py` |
 | API responses, errors, the feature lookup and hot swap | `tests/test_api.py` |
 | Database upserts and reads against a real Postgres (CI service; locally with `AEROSCRAPE_TEST_DB=1`) | `tests/test_database_load.py` |
+| Prediction log, outcome matching, live metrics, drift (PSI) and the retraining decision; the tables and the API role's rights in Postgres | `tests/test_monitoring.py`, `tests/test_monitoring_db.py` |
+| Alert rules, with `promtool` (`make check-monitoring`) | `monitoring/alerts.test.yml` |
 | DAG imports and structure | `tests/test_dags.py` |
 | The BTS adapter, on synthetic data in the exact BTS file layout | `tests/test_bts.py` |
 
@@ -300,6 +307,7 @@ The Airflow task wrappers are covered by running the DAGs in Docker rather than 
 2.  **Training:** `train_delay_model` runs weekly (`make train` runs it now) and ends with the promotion gate.
 3.  **Model management:** `make model-status`, `make rollback VERSION=n`; every gate decision is an MLflow `promotion_gate` run.
 4.  **Prediction:** `POST http://localhost:8000/v1/predict` (or `/v1/predict/batch`) with the `X-API-Key` header, or the Streamlit demo at `http://localhost:8501`.
+5.  **Monitoring:** `monitor_model` runs daily (`make monitor` runs it now); `make replay DAYS=7` sends last week's scraped flights through the API as live traffic. See [docs/monitoring.md](docs/monitoring.md).
 
 ---
 
@@ -355,6 +363,7 @@ The FastAPI service provides a RESTful API for real-time flight delay prediction
 
 * **API Documentation:** `http://localhost:8000/docs` (Swagger UI)
 * **Liveness and readiness:** `GET /health`, `GET /ready`
+* **Prometheus metrics:** `GET /metrics`
 * **Contract, security, logs and measured latency:** [docs/serving.md](docs/serving.md)
 
 ### `POST /v1/predict`
