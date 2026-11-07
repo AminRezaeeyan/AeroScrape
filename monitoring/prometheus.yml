@@ -5,6 +5,11 @@ global:
 
 rule_files: [alerts.yml]
 
+# Firing alerts go to Alertmanager, which groups them and notifies Telegram
+alerting:
+  alertmanagers:
+    - static_configs: [{targets: ["alertmanager:9093"]}]
+
 scrape_configs:
   - job_name: api
     static_configs: [{targets: ["api:8000"]}]

@@ -1,0 +1,9 @@
+{{/* One Telegram message per alert group: status, alert, severity, and each alert's summary */}}
+{{ define "telegram.aeroscrape" -}}
+{{ if eq .Status "firing" }}🔴 <b>FIRING</b>{{ else }}✅ <b>RESOLVED</b>{{ end }} · <b>{{ .CommonLabels.alertname }}</b>{{ with .CommonLabels.severity }} · {{ . }}{{ end }}
+{{ range .Alerts }}
+• {{ .Annotations.summary }}{{ with .Labels.airport }} ({{ . }}){{ end }}{{ with .Labels.model_version }} · model {{ . }}{{ end }}
+{{- end }}
+
+AeroScrape · Grafana http://localhost:3000 · Prometheus http://localhost:9090/alerts
+{{- end }}

@@ -1,0 +1,32 @@
+# Rendered by entrypoint.sh, which fills in TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from .env.
+# Prometheus evaluates the rules in ../alerts.yml and sends firing alerts here; Alertmanager
+# groups them, silences repeats and notifies Telegram.
+global:
+  resolve_timeout: 5m
+
+templates: [/etc/alertmanager/telegram.tmpl]
+
+route:
+  receiver: telegram
+  group_by: [alertname, airport]
+  group_wait: 30s        # collect alerts that fire together into one message
+  group_interval: 5m
+  repeat_interval: 6h    # remind while a warning is still firing
+  routes:
+    - matchers: [severity="critical"]
+      receiver: telegram
+      repeat_interval: 1h
+
+# While the API is down, its latency and error alerts are noise
+inhibit_rules:
+  - source_matchers: [alertname="ApiDown"]
+    target_matchers: [alertname=~"ApiHighErrorRate|ApiSlowP95"]
+
+receivers:
+  - name: telegram
+    telegram_configs:
+      - bot_token: "${TELEGRAM_BOT_TOKEN}"
+        chat_id: ${TELEGRAM_CHAT_ID}
+        parse_mode: HTML
+        send_resolved: true
+        message: '{{ template "telegram.aeroscrape" . }}'

@@ -83,6 +83,8 @@ jobs:
         run: |
           docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" -w /m prom/prometheus:v2.53.0 check config prometheus.yml
           docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" -w /m prom/prometheus:v2.53.0 test rules alerts.test.yml
+          docker run --rm --entrypoint sh -e TELEGRAM_BOT_TOKEN=123:test -e TELEGRAM_CHAT_ID=-100123 \
+            -v "$PWD/monitoring/alertmanager:/etc/alertmanager:ro" prom/alertmanager:v0.27.0 /etc/alertmanager/check.sh
       - name: Smoke test
         run: |
           docker run --rm aeroscrape/api:ci python -c "import aeroscrape.serving.api"

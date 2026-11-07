@@ -32,6 +32,7 @@ volumes:
   postgres_data:
   prometheus_data:
   pushgateway_data:
+  alertmanager_data:
   grafana_data:
 
 services:
@@ -208,6 +209,7 @@ services:
     ports:
       - "9090:9090"
     networks: [flight_network]
+    depends_on: [alertmanager]
 
   pushgateway:
     image: prom/pushgateway:v1.9.0
@@ -217,6 +219,20 @@ services:
       - pushgateway_data:/pushgateway  # the image makes this directory writable for its user
     ports:
       - "9091:9091"
+    networks: [flight_network]
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    # Renders the config with the bot token and chat id from .env; placeholders mean UI only
+    entrypoint: ["/bin/sh", "/etc/alertmanager/entrypoint.sh"]
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - alertmanager_data:/alertmanager  # silences and notification state
+    ports:
+      - "9093:9093"
     networks: [flight_network]
 
   grafana:

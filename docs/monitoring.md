@@ -19,6 +19,7 @@ flowchart LR
     monitor -->|alert| train[train_delay_model DAG]
     pgw --> prom
     prom --> grafana[Grafana]
+    prom -->|alerts| am[Alertmanager] --> tg[Telegram]
     daily --> grafana
 ```
 
@@ -28,7 +29,8 @@ flowchart LR
 | --- | --- |
 | Grafana, http://localhost:3000 (`admin`, `GRAFANA_ADMIN_PASSWORD`) | The AeroScrape dashboard: API traffic, latency and errors, predictions per airport, scraper rows, live vs. offline metrics, drift |
 | Prometheus, http://localhost:9090 | Raw metrics; `/alerts` shows the alert rules and what is firing |
-| Pushgateway, http://localhost:9091 | The last metrics each batch job pushed |
+| Pushgateway, http://localhost:9091 | The last metrics each batch job pushed (kept across restarts) |
+| Alertmanager, http://localhost:9093 | Firing alerts, grouped; silences; sends them to Telegram |
 | `reports/monitoring/drift_<date>.html` and MLflow experiment `flight_delay_monitoring` | Drift report per run |
 
 Prometheus tracks the service and a few numbers over time. The model-quality work happens in
@@ -113,8 +115,22 @@ same handful of numbers. The ~150 lines in `aeroscrape/monitoring/drift.py` are 
 | InputDrift | Any input's PSI is 0.25 or more |
 | MonitoringStale | The monitor DAG hasn't run for a day |
 
-Alerts show in Prometheus (`/alerts`) and on the dashboard's "Firing alerts" panel. Notifications
-(Telegram, Slack) need an Alertmanager with a bot token, which this stack doesn't include.
+Alerts show in Prometheus (`/alerts`) and on the dashboard's "Firing alerts" panel, and Prometheus
+sends them to Alertmanager (`monitoring/alertmanager/`), which:
+
+- groups alerts that fire together (by alert and airport) into one message, after 30 seconds;
+- repeats a warning every 6 hours and a critical alert every hour while it fires, and sends a
+  message when it resolves;
+- suppresses the API's latency and error alerts while `ApiDown` fires;
+- sends each group to Telegram as an HTML message with the alert, its severity, the summary of
+  each alert and the airport or model version it concerns.
+
+To receive them, create a bot with [@BotFather](https://t.me/BotFather), add it to a chat, and set
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` (a group's id starts with `-100`), then
+`docker compose up -d alertmanager`. Alertmanager can't read environment variables, so its
+entrypoint renders the config from `alertmanager.yml.tmpl`; with the placeholders from
+`template.env`, it starts with a receiver that sends nothing and alerts are visible at
+http://localhost:9093 only. `make check-monitoring` validates the rendered config with `amtool`.
 
 ## Trying it without real traffic
 
