@@ -4,6 +4,7 @@ DATA_FILE := data/raw/data.csv
 TRAIN_DAG := train_delay_model
 MONITOR_DAG := monitor_model
 PROMETHEUS_IMAGE := prom/prometheus:v2.53.0
+ALERTMANAGER_IMAGE := prom/alertmanager:v0.27.0
 INGEST_DAG := ingest_flights
 TRAIN_FRACTION ?= 1.0
 SOURCE ?= iran_fids
@@ -11,7 +12,7 @@ USERS ?= 8
 LOADTEST_SECONDS ?= 30
 API_URL ?= http://localhost:8000
 
-.PHONY: setup lint format test check-monitoring migrate monitor replay loadtest fix-permissions build-offline up-offline data bts-data evaluate learning-curve train ingest rollback model-status up down
+.PHONY: setup lint format test notebooks check-monitoring migrate monitor replay loadtest fix-permissions build-offline up-offline data bts-data evaluate learning-curve train ingest rollback model-status up down
 
 setup:  ## Install all dependencies from the lock file and the git hooks
 	uv sync --frozen --all-extras
@@ -29,14 +30,19 @@ format:  ## Fix lint issues and format the code
 test:  ## Run the test suite
 	uv run --frozen pytest -q
 
-check-monitoring:  ## Validate the Prometheus config and unit-test the alert rules (needs Docker)
+check-monitoring:  ## Validate the Prometheus and Alertmanager configs and unit-test the alert rules (needs Docker)
 	docker run --rm --entrypoint promtool -v "$(CURDIR)/monitoring:/m:ro" -w /m $(PROMETHEUS_IMAGE) check config prometheus.yml
 	docker run --rm --entrypoint promtool -v "$(CURDIR)/monitoring:/m:ro" -w /m $(PROMETHEUS_IMAGE) test rules alerts.test.yml
+	docker run --rm --entrypoint sh -e TELEGRAM_BOT_TOKEN=123:test -e TELEGRAM_CHAT_ID=-100123 \
+		-v "$(CURDIR)/monitoring/alertmanager:/etc/alertmanager:ro" $(ALERTMANAGER_IMAGE) /etc/alertmanager/check.sh
 
 data:  ## Download the raw dataset and verify its checksum
 	mkdir -p $(dir $(DATA_FILE))
 	curl -fsSL -o $(DATA_FILE) $(DATA_URL)
 	echo "$(DATA_SHA256)  $(DATA_FILE)" | sha256sum --check
+
+notebooks:  ## Run the analysis notebooks in notebooks/ and save them with their outputs
+	uv run --frozen python tools/run_notebooks.py
 
 evaluate:  ## Tune, train and evaluate locally on a time split; SOURCE=bts for the US data
 	uv run --frozen python -m aeroscrape.models.experiment --source $(SOURCE)

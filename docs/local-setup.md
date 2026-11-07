@@ -78,8 +78,9 @@ result.flights, result.failures
 | Target | What |
 | --- | --- |
 | `setup`, `lint`, `format`, `test` | Development |
-| `check-monitoring` | Prometheus config check and alert rule tests (Docker) |
+| `check-monitoring` | Prometheus and Alertmanager config checks and alert rule tests (Docker) |
 | `data`, `bts-data` | Download the archive / the configured BTS months |
+| `notebooks` | Run the analysis notebooks and save them with their outputs |
 | `evaluate`, `learning-curve` | Local evaluation; `SOURCE=bts` for the US data |
 | `up`, `down`, `up-offline`, `build-offline` | The Docker stack; the offline pair builds from the local uv cache when PyPI is unreachable |
 | `migrate` | Add tables, roles and columns introduced after the database was created (safe to repeat) |
