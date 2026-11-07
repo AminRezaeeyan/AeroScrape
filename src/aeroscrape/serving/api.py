@@ -22,6 +22,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from importlib.metadata import version as package_version
 from typing import Annotated, Any
 
 import mlflow
@@ -165,7 +166,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Flight Delay Prediction API",
     description="Calibrated probability of a delay over 15 minutes and a likely delay range.",
-    version="3.0.0",
+    version=package_version("aeroscrape"),
     lifespan=lifespan,
 )
 app.add_middleware(

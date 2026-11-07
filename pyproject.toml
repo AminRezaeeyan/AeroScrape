@@ -1,6 +1,6 @@
 [project]
 name = "aeroscrape"
-version = "0.2.0"
+version = "2.0.0"
 description = "Flight data scraping and delay prediction for Iranian airports"
 readme = "README.md"
 license = "MIT"
