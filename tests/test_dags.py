@@ -22,14 +22,14 @@ def test_no_import_errors(dagbag) -> None:
 
 
 def test_training_ends_in_a_gate_branch(dagbag) -> None:
-    dag = dagbag.get_dag("train_delay_model")
+    dag = dagbag.dags["train_delay_model"]
     assert "choose_branch" in dag.get_task("evaluate_gate").downstream_task_ids
     assert dag.get_task("choose_branch").downstream_task_ids >= {"promote", "reject"}
 
 
 @pytest.mark.parametrize("dag_id", ["ingest_flights", "train_delay_model", "monitor_model"])
 def test_a_failed_task_fails_the_run(dagbag, dag_id: str) -> None:
-    dag = dagbag.get_dag(dag_id)
+    dag = dagbag.dags[dag_id]
     watcher = dag.get_task("watcher")
     assert watcher.trigger_rule == "one_failed"
     main_tasks = {t.task_id for t in dag.tasks} - {"watcher", "cleanup"}
@@ -37,13 +37,13 @@ def test_a_failed_task_fails_the_run(dagbag, dag_id: str) -> None:
 
 
 def test_training_can_run_on_either_data_source(dagbag) -> None:
-    source = dagbag.get_dag("train_delay_model").params.get_param("source")
+    source = dagbag.dags["train_delay_model"].params.get_param("source")
     assert source.value == "iran_fids"
     assert set(source.schema["enum"]) == {"iran_fids", "bts"}
 
 
 def test_monitoring_can_only_trigger_training_through_its_decision(dagbag) -> None:
-    dag = dagbag.get_dag("monitor_model")
+    dag = dagbag.dags["monitor_model"]
     assert dag.get_task("trigger_retraining").upstream_task_ids == {"decide_retrain"}
     assert dag.get_task("decide_retrain").upstream_task_ids == {"live_performance", "detect_drift"}
     assert dag.get_task("trigger_retraining").trigger_dag_id == "train_delay_model"
