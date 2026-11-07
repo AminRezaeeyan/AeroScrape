@@ -1,0 +1,4 @@
+# GitHub's language bar: the notebooks are analysis write-ups, and their embedded chart images
+# would otherwise make "Jupyter Notebook" the main language. Count them as documentation.
+notebooks/** linguist-documentation
+*.ipynb linguist-documentation
